@@ -14,7 +14,7 @@
 | 5 | Mapa: `flutter_map` + OSM, маркеры с иконкой и текстом, поиск, фильтры, «Lista» | места на карте, список работает | ✅ |
 | 6 | Karta miejsca: барьеры, удобства, источник, дата, бейдж доверия, конфликт данных | демо-сценарий «Wawel» | ✅ |
 | 7 | Trasa: ORS wheelchair + текстовый список сегментов (fallback — демо-маршрут) | линия на карте + список | ⬜ |
-| 8 | Złap / Kolekcja / Nagrody на демо: анкета барьеров, очки, ваучер с таймером 2 ч, «DANE PRZYKŁADOWE» | главный сценарий целиком | ⬜ |
+| 8 | Złap / Kolekcja / Nagrody на демо: анкета барьеров, очки, ваучер с таймером 2 ч, «DANE PRZYKŁADOWE» | главный сценарий целиком | ✅ |
 | 9 | A11y + сборка: Semantics, клавиатура, `flutter build web` | сдача прототипа, merge в `master` | ⬜ |
 
 ## Этап 2 — финал (до 11:00)
@@ -24,7 +24,7 @@
 | 10 | Overpass-адаптер во Flutter: реальные данные OSM + снимок в assets + баннер «źródło niedostępne» | `mobile/` | ⬜ |
 | 11 | `docker-compose.yml`: PostGIS + Redpanda + заготовки двух сервисов | корень | ⬜ |
 | 12 | central-api: Spring Boot, Flyway, сущности `place` / `accessibility_fact`, импорт Overpass, `/places`, `/places/{id}`, `/facts` | `services/central-api` | ⬜ |
-| 13 | vision-service: FastAPI + Kafka consumer/producer, OpenCV-предобработка, Gemini → JSON | `services/vision-service` | ⬜ |
+| 13 | vision-service: FastAPI + Kafka consumer/producer, OpenCV-предобработка, Gemini → JSON | `services/vision-service` | ✅ |
 | 14 | central-api: `/catches` (202 + опрос), Kafka producer/consumer, очки, спавн и редкость | `services/central-api` | ⬜ |
 | 15 | Толпы: сетка, базовая оценка, опрос «Jak tłoczno?», слой на карте | оба | ⬜ |
 | 16 | Ваучеры: квота от толпы, активация, таймер | оба | ⬜ |
