@@ -88,7 +88,7 @@
 - P2: групповые прогулки.
 
 ### 4.4 Złap / Zgłoś (камера)
-- P1: фото → Java API → **Python-сервис (FastAPI, компьютерное зрение)** → **Gemini API (Flash, structured output)** → JSON:
+- P1: фото → Java API → Kafka (`photo.submitted`) → **Python-сервис (FastAPI, компьютерное зрение)** → **Gemini API (Flash, structured output)** → JSON:
   `{steps:int?, kerb_range:"0-3"|"3-7"|">7"|null, width_range:"<70"|"70-90"|">90"|null, ramp:bool?, handrail:bool?, obstacles:[...], difficulty:0-10, confidence:0-1}`.
   Сантиметры по одному фото не измерить, поэтому ИИ возвращает **диапазоны**.
 - Python-сервис до вызова Gemini (OpenCV, Pillow, imagehash):
@@ -200,6 +200,20 @@ Otwarte Dane  ─┤               OtwarteDaneAdapter   ─┤      CrowdGrid   
 Пользователи  ─┤               UserReportService    ─┤      Spawn / Rewards                 └──► (P2) виджет / API B2B
 Фото → Python CV ─► Gemini ─┘  AiPhotoService       ─┘      RoutingService ──► OpenRouteService
 ```
+**Микросервисы (монорепо):**
+```
+mobile/ (Flutter) ──REST──► central-api (Java, PostGIS) ──topic photo.submitted──► vision-service (Python)
+                                  ▲                                                      │
+                                  └──────────── topic photo.analyzed ◄───────────────────┘
+```
+| Сервис | Стек | Ответственность |
+|---|---|---|
+| `mobile` | Flutter | UI, профиль потребностей (локально), карта, камера |
+| `central-api` | Java 21, Spring Boot 3, PostGIS | REST для клиента, адаптеры источников, достоверность, маршруты (прокси ORS), толпы, игра, ваучеры |
+| `vision-service` | Python 3.12, FastAPI, OpenCV, google-genai | анализ фото: предобработка + Gemini |
+| брокер | Redpanda (Kafka API) | асинхронная связь central-api ↔ vision |
+| БД | PostgreSQL 16 + PostGIS | только у central-api |
+
 - **Отделение данных от представления** (требование PDF): адаптеры реализуют интерфейс `SourceAdapter { fetch(bbox) → List<AccessibilityFact> }`. Новый источник = новый класс + запись в конфиге.
 - **Новый город** = запись `City{name, bbox, timezone, grid_size, enabled_adapters}` + запуск импорта. Код не меняется.
 - **Новая категория мест** = маппинг тегов OSM → feature в YAML.
@@ -215,8 +229,15 @@ Otwarte Dane  ─┤               OtwarteDaneAdapter   ─┤      CrowdGrid   
 ### 9.2 Этап 2: бэкенд Java Spring Boot + PostGIS
 - Java 21, Spring Boot 3, Spring Web, Spring Data JPA + **Hibernate Spatial** (JTS, SRID 4326), Flyway, Spring Security (анонимный JWT: устройство получает токен без регистрации), `@Scheduled` (импорт и пересчёт сетки), Bean Validation, springdoc-openapi (Swagger).
 - Хранение фото: локальный том, P2 — MinIO/S3.
-- Анализ фото — отдельный контейнер `vision` (Python 3.12, FastAPI, OpenCV, imagehash, google-genai). Java вызывает его по внутренней сети, наружу он не открыт. Ключ Gemini хранится только в `vision`.
-- `docker-compose.yml`: `postgis/postgis:16-3.4` + `app`. Деплой на Railway или Render. **Прогреть инстанс перед демо** (холодный старт).
+- Анализ фото — отдельный сервис `vision-service` (Python 3.12, FastAPI, OpenCV, imagehash, google-genai, aiokafka). Наружу не открыт, ключ Gemini хранится только в нём.
+- **Связь через Kafka API (Redpanda, один узел):**
+  1. Flutter → `POST /api/v1/catches` (multipart). central-api сохраняет фото в общий том `/photos`, создаёт `catch` со статусом `PENDING` и отвечает `202 {catchId}`.
+  2. central-api публикует в топик `photo.submitted`: `{catchId, photoPath, lat, lng, spawnId, submittedAt}`. **Байты фото в Kafka не передаём**, только путь.
+  3. vision-service читает событие, выполняет предобработку и вызов Gemini, публикует в `photo.analyzed`: `{catchId, status: OK|REJECTED|FAILED, result{…раздел 4.4…}, reason?}`.
+  4. central-api читает `photo.analyzed`, обновляет `catch`, создаёт `AccessibilityFact` (source=AI), начисляет очки.
+  5. Flutter опрашивает `GET /api/v1/catches/{id}` раз в 1–2 с (P2: SSE).
+- Ключ сообщения = `catchId` (порядок в рамках одного фото). Обработка идемпотентна: повтор события не начисляет очки повторно. Ошибка → 3 ретрая, затем топик `photo.analyzed.dlq` и статус `FAILED` («AI niedostępne, użyj ankiety»).
+- `docker-compose.yml`: `postgis/postgis:16-3.4`, `redpandadata/redpanda` (≈200 МБ ОЗУ), `central-api`, `vision-service`, общий том `photos`. Деплой: VPS (Hetzner/Oracle Free) одним `docker compose up`. Managed Kafka на бесплатных PaaS обычно недоступна. **Прогреть инстанс перед демо.**
 - CORS для Flutter Web.
 
 **Подводные камни, которые учесть:**
@@ -255,7 +276,8 @@ POST /routes  {points[], profile, avoidCrowds} маршрут + сегменты
 GET  /crowd?bbox=&at=                         сетка толп + источник
 POST /crowd/report {lat,lng,level}
 GET  /spawns?bbox=
-POST /catches (multipart photo, spawnId, lat, lng) → ai_result, points
+POST /catches (multipart photo, spawnId, lat, lng) → 202 {catchId}
+GET  /catches/{id}                            статус PENDING/OK/REJECTED/FAILED + ai_result, points
 POST /baits
 GET  /rewards/offers?bbox=  POST /vouchers/{offerId}/activate
 GET  /me  (очки, статистика, % исследованности)
@@ -338,7 +360,7 @@ GET  /health/sources                          статус источников 
 
 **20:00–11:00 (финал):**
 - B: Spring Boot + PostGIS (сущности, Flyway, импорт Overpass, API из 9.4), деплой.
-- C: Python-сервис `vision` (OpenCV + Gemini), спавн и редкость, ваучеры с таймером и квотой.
+- C: `vision-service` (OpenCV + Gemini, Kafka consumer/producer), спавн и редкость, ваучеры с таймером и квотой.
 - A: переключение на `ApiRepository`, слой толп, перебалансировка маршрута, проверка a11y.
 - 07:00–10:30: PDF (≤10 слайдов, на польском), видео (≤3 мин) → открытый репозиторий, README с лицензиями и источниками.
 
