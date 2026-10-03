@@ -1,0 +1,56 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: central-api
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/kbb}
+    username: ${SPRING_DATASOURCE_USERNAME:kbb}
+    password: ${SPRING_DATASOURCE_PASSWORD:kbb}
+  flyway:
+    enabled: true
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: always
+  servlet:
+    multipart:
+      max-file-size: 3MB
+      max-request-size: 4MB
+  kafka:
+    bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:19092}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        max.block.ms: 5000
+    consumer:
+      group-id: central-api
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      missing-topics-fatal: false
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:}
+    ttl-days: 30
+  photos-dir: ${PHOTOS_DIR:./photos}
+  cors:
+    extra-origins: ${CORS_EXTRA_ORIGINS:}
+  seed:
+    enabled: ${SEED_ENABLED:true}
+  ors:
+    api-key: ${ORS_API_KEY:}
+    base-url: ${ORS_BASE_URL:https://api.openrouteservice.org}
+    cache-minutes: 10
+  overpass:
+    url: ${OVERPASS_URL:https://overpass-api.de/api/interpreter}
+    cron: ${OVERPASS_CRON:0 0 4 * * *}
+  admin-token: ${ADMIN_TOKEN:}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
