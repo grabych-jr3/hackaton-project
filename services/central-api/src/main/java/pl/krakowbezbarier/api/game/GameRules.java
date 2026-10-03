@@ -23,7 +23,11 @@ public final class GameRules {
         common(10), rare(25), epic(60), legendary(150);
         public final int points;
         Rarity(int points) { this.points = points; }
+        /** Points earned for selling one creature of this rarity. */
+        public int sellValue() { return points; }
     }
+
+    public static int sellEarnings(Rarity rarity, int count) { return Math.multiplyExact(rarity.sellValue(), count); }
 
     public enum CurbRange { none, low, mid, high }
 

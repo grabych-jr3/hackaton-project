@@ -436,7 +436,7 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
 Правила — порт `mobile/lib/features/game/game_models.dart` (`GameRules`), случайность на сервере.
 Ошибки: `{ "error": CODE, "code": CODE, "message" }` (клиент читает `code`).
 
-- `GET /game/catalog` (public) → копия `mobile/assets/demo/game.json` (`dataset, isDemo, initialPoints, species[], offers[], districts[]`).
+- `GET /game/catalog` (public) → копия `mobile/assets/demo/game.json` (`dataset, isDemo, initialPoints, species[], offers[], districts[]`). У каждого вида есть `sellValue` (common 10, rare 25, epic 60, legendary 150) и польское `description`.
 - `GET /game/state` (auth) → `{ "points": 120, "caught": { "golab": 2 }, "vouchers": [ { "offerId", "code", "activatedAt", "expiresAt" } ] }`. Новый пользователь получает `initialPoints` (120) при первом `/auth/anonymous`.
 - `POST /game/reports` (auth)
   ```json
@@ -446,10 +446,15 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
   `curb` ∈ none|low|mid|high, `passage` ∈ none|wide|medium|narrow.
   severity: steps>0 → +1 (≥3 → +2); curb mid +1, high +2; passage medium +1, narrow +2; noRamp +2; uneven +1; obstacles +1.
   score = severity + random(0..3): ≥10 legendary (150), ≥6 epic (60), ≥3 rare (25), иначе common (10); вид — случайный из этой редкости.
-  Ответ: `{ "species": {id,name,emoji,rarity}, "points": 60, "state": GameState }`.
+  Ответ: `{ "species": {id,name,emoji,rarity}, "points": 60, "awarded": 0, "state": GameState }`.
+  **Поимка очков не даёт** (`state.points` не меняется, `caught[speciesId]` +1); `points` = цена продажи этого вида, `awarded` всегда 0.
   Если есть placeId — создаются факты `source=user` (`sourceRef=report:<id>`): steps>0 → `steps`; curb low/mid/high → `kerbHeight` "0-3"/"3-7"/">7"; passage wide/medium/narrow → `doorWidth` ">90"/"70-90"/"<70"; noRamp → `ramp=false`.
+- `POST /game/sell` (auth) `{ "speciesId": "smok", "count": 1 }` → `{ "earned": 150, "state": GameState }`.
+  earned = count × sellValue(rarity); `caught[speciesId]` уменьшается на count (ключ удаляется при 0); очки — через `points_ledger` (reason `sell`).
+  `400 INVALID_COUNT` (count < 1), `409 NOT_ENOUGH_CREATURES` (count > есть у пользователя), `404 NOT_FOUND` (неизвестный вид).
 - `POST /game/vouchers` (auth) `{ "offerId" }` → `{ "voucher": {offerId,code:"KBB-XXXX",activatedAt,expiresAt}, "state" }`; срок 120 мин.
   `402 INSUFFICIENT_POINTS`, `403 OFFER_NOT_VERIFIED`, `404 NOT_FOUND`.
+- Маршруты: если в `/routes` нет `profile.minWidthCm`, используется 75 см (0.75 м, `minimum_width` для ORS); поле по-прежнему принимается.
 - Хранение: `user_species`, `game_report`, `game_voucher` (V2), очки — `app_user.points` + `points_ledger`.
 
 ### 5.8 Служебное

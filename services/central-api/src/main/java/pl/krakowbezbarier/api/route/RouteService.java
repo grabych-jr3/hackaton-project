@@ -69,15 +69,19 @@ public class RouteService {
         }
     }
 
+    static final int DEFAULT_MIN_WIDTH_CM = 75;
+
     static Map<String, Object> orsBody(RouteRequest req) {
         List<List<Double>> coords = req.points().stream().map(p -> List.of(p.lng(), p.lat())).toList();
         Map<String, Object> restrictions = new LinkedHashMap<>();
         RouteProfile pr = req.profile();
         if (pr != null) {
             if (pr.maxKerbCm() != null) restrictions.put("maximum_sloped_kerb", pr.maxKerbCm() / 100.0);
-            if (pr.minWidthCm() != null) restrictions.put("minimum_width", pr.minWidthCm() / 100.0);
             if (pr.maxInclinePct() != null) restrictions.put("maximum_incline", pr.maxInclinePct());
         }
+        // the app no longer sends a user-adjustable width: default to a standard wheelchair (75 cm)
+        int widthCm = pr != null && pr.minWidthCm() != null ? pr.minWidthCm() : DEFAULT_MIN_WIDTH_CM;
+        restrictions.put("minimum_width", widthCm / 100.0);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("coordinates", coords);
         body.put("instructions", true);

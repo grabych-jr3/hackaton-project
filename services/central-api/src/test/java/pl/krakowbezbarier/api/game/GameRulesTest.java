@@ -69,6 +69,25 @@ class GameRulesTest {
     }
 
     @Test
+    void catalogSpeciesHaveSellValueAndDescription() throws Exception {
+        JsonNode raw = om.readTree(new ClassPathResource("game/game.json").getInputStream());
+        assertEquals(8, raw.get("species").size());
+        for (JsonNode s : raw.get("species")) {
+            Rarity r = Rarity.valueOf(s.get("rarity").asText());
+            assertEquals(r.sellValue(), s.get("sellValue").asInt(), s.get("id").asText());
+            assertFalse(s.get("description").asText().isBlank());
+        }
+    }
+
+    @Test
+    void sellEarnings() {
+        assertEquals(10, GameRules.sellEarnings(Rarity.common, 1));
+        assertEquals(75, GameRules.sellEarnings(Rarity.rare, 3));
+        assertEquals(120, GameRules.sellEarnings(Rarity.epic, 2));
+        assertEquals(150, GameRules.sellEarnings(Rarity.legendary, 1));
+    }
+
+    @Test
     void voucherCodeFormat() {
         Random r = new Random();
         for (int i = 0; i < 50; i++) assertTrue(GameRules.voucherCode(r).matches("KBB-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}"));
@@ -103,6 +122,9 @@ class GameRulesTest {
         var resp = new GameService.ReportResponse(new Species("golab", "Gołąb", "x", Rarity.common), 10, state);
         JsonNode rj = om.readTree(om.writeValueAsString(resp));
         assertTrue(rj.has("species") && rj.has("points") && rj.has("state"));
+        assertEquals(0, rj.get("awarded").asInt());
+        JsonNode sj = om.readTree(om.writeValueAsString(new GameService.SellResponse(25, state)));
+        assertTrue(sj.has("earned") && sj.has("state"));
         JsonNode vj = om.readTree(om.writeValueAsString(new GameService.VoucherResponse(state.vouchers().get(0), state)));
         assertTrue(vj.has("voucher") && vj.has("state"));
     }
