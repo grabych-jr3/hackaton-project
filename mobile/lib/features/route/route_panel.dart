@@ -54,8 +54,8 @@ class RoutePanel extends StatelessWidget {
                   ),
                   IconButton(
                     onPressed: onClose,
-                    tooltip: 'Zamknij trasę',
-                    icon: const Icon(Icons.close_rounded, color: AppColors.textMuted),
+                    tooltip: 'Zwiń listę kroków (trasa zostaje na mapie)',
+                    icon: const Icon(Icons.expand_more_rounded, color: AppColors.textMuted),
                   ),
                 ],
               ),
@@ -130,6 +130,60 @@ class RoutePanel extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Collapsed route bar: the line stays on the map, steps are hidden.
+class RouteCollapsedBar extends StatelessWidget {
+  const RouteCollapsedBar({
+    super.key,
+    required this.route,
+    required this.onExpand,
+    required this.onClear,
+  });
+
+  final PlannedRoute route;
+  final VoidCallback onExpand;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    return Material(
+      color: AppColors.surfaceGlass,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: const BorderSide(color: AppColors.border),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
+        child: Row(
+          children: [
+            const Icon(Icons.route_rounded, color: AppColors.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '${route.destination.name} · ${formatDistance(route.distanceM)}'
+                '${route.isDemo ? ' · przykładowa' : ''}',
+                style: text.bodyMedium?.copyWith(
+                    color: AppColors.text, fontWeight: FontWeight.w700),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            TextButton(
+              onPressed: onExpand,
+              child: const Text('Pokaż kroki'),
+            ),
+            IconButton(
+              onPressed: onClear,
+              tooltip: 'Usuń trasę',
+              icon: const Icon(Icons.close_rounded, color: AppColors.textMuted),
+            ),
+          ],
         ),
       ),
     );

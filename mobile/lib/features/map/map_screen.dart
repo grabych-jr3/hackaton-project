@@ -33,6 +33,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   _MapStyle _style = _MapStyle.dark;
   LatLng? _myLocation;
   bool _locating = false;
+  bool _routeCollapsed = false;
 
   Future<void> _locate() async {
     final messenger = ScaffoldMessenger.of(context);
@@ -70,6 +71,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 
   Future<void> _planRoute(Place place) async {
+    setState(() => _routeCollapsed = false);
     await ref.read(routeProvider.notifier).plan(place, myLocation: _myLocation);
     final points = ref.read(routeProvider).value?.points;
     if (!mounted || points == null || points.length < 2) return;
@@ -210,15 +212,25 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     bottom: 96,
                     child: Center(child: CircularProgressIndicator()),
                   )
-                else if (route.value != null)
+                else if (route.value != null &&
+                    (!_routeCollapsed || _selected == null))
                   Positioned(
                     left: 16,
                     right: 16,
                     bottom: 96,
-                    child: RoutePanel(
-                      route: route.value!,
-                      onClose: () => ref.read(routeProvider.notifier).clear(),
-                    ),
+                    child: _routeCollapsed
+                        ? RouteCollapsedBar(
+                            route: route.value!,
+                            onExpand: () => setState(() => _routeCollapsed = false),
+                            onClear: () => ref.read(routeProvider.notifier).clear(),
+                          )
+                        : RoutePanel(
+                            route: route.value!,
+                            onClose: () => setState(() {
+                              _routeCollapsed = true;
+                              _selected = null;
+                            }),
+                          ),
                   )
                 else if (_selected != null)
                   Positioned(
