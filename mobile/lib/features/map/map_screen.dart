@@ -312,7 +312,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     bottom: 96,
                     child: _routeCollapsed
                         ? RouteCollapsedBar(
-                            route: route.value!,
+                            // Show the route the user is looking at (walking or accessible).
+                            route: ref.watch(showAlternativeProvider) &&
+                                    route.value!.alternative != null
+                                ? route.value!.alternative!
+                                : route.value!,
                             onExpand: () => setState(() => _routeCollapsed = false),
                             onClear: () => ref.read(routeProvider.notifier).clear(),
                           )
