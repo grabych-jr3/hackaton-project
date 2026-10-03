@@ -1,0 +1,28 @@
+{
+  "dataset": "DANE PRZYKŁADOWE — demonstracyjne stworki, partnerzy i oferty; nie są prawdziwymi ofertami",
+  "isDemo": true,
+  "initialPoints": 120,
+  "species": [
+    {"id": "golab", "name": "Gołąb", "emoji": "🐦", "rarity": "common"},
+    {"id": "jez", "name": "Jeż", "emoji": "🦔", "rarity": "common"},
+    {"id": "lis", "name": "Lis", "emoji": "🦊", "rarity": "common"},
+    {"id": "sowa", "name": "Sowa", "emoji": "🦉", "rarity": "rare"},
+    {"id": "wydra", "name": "Wydra", "emoji": "🦦", "rarity": "rare"},
+    {"id": "bocian", "name": "Bocian", "emoji": "🕊️", "rarity": "epic"},
+    {"id": "niedzwiedz", "name": "Niedźwiedź", "emoji": "🐻", "rarity": "epic"},
+    {"id": "smok", "name": "Smok", "emoji": "🐉", "rarity": "legendary"}
+  ],
+  "offers": [
+    {"id": "kawa-rynek", "partner": "Kawiarnia Pod Arkadami (demo)", "placeId": "sukiennice", "discount": "-20% na kawę", "cost": 50, "verifiedAccess": true},
+    {"id": "obiad-kazimierz", "partner": "Bistro Kazimierz (demo)", "discount": "Deser gratis do obiadu", "cost": 80, "verifiedAccess": true},
+    {"id": "muzeum-podgorze", "partner": "Muzeum w Podgórzu (demo)", "discount": "-30% na bilet", "cost": 150, "verifiedAccess": true},
+    {"id": "lody-huta", "partner": "Lodziarnia Nowa Huta (demo)", "discount": "Druga gałka gratis", "cost": 40, "verifiedAccess": true},
+    {"id": "bar-schody", "partner": "Bar Na Schodach (demo)", "discount": "-10% na wszystko", "cost": 30, "verifiedAccess": false}
+  ],
+  "districts": [
+    {"name": "Stare Miasto", "percent": 42},
+    {"name": "Kazimierz", "percent": 27},
+    {"name": "Podgórze", "percent": 15},
+    {"name": "Nowa Huta", "percent": 6}
+  ]
+}
