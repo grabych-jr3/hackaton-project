@@ -11,8 +11,13 @@ public final class RouteDtos {
 
     public record LatLng(double lat, double lng) {}
 
-    /** Thresholds are used only for this call - never stored or logged. */
-    public record RouteProfile(Integer maxKerbCm, Integer minWidthCm, Integer maxInclinePct) {}
+    /** Thresholds are used only for this call - never stored or logged.
+     *  maxSteps: 0 = no steps at all (wheelchair), >0 = a few steps OK (stroller), null = not given. */
+    public record RouteProfile(Integer maxSteps, Integer maxKerbCm, Integer minWidthCm, Integer maxInclinePct) {
+        public RouteProfile(Integer maxKerbCm, Integer minWidthCm, Integer maxInclinePct) {
+            this(null, maxKerbCm, minWidthCm, maxInclinePct);
+        }
+    }
 
     public record RouteRequest(@NotNull @Size(min = 2, max = 25) List<@Valid @NotNull LatLng> points,
                                RouteProfile profile, boolean avoidCrowds, boolean optimizeOrder) {
@@ -23,7 +28,30 @@ public final class RouteDtos {
     /** warning: single nullable string (contract v2). */
     public record Segment(String instruction, double distanceM, String warning) {}
 
-    /** geometry is a list of [lat, lng] pairs (Flutter order). */
-    public record RouteResponse(double distanceM, double durationS, List<double[]> geometry, List<Segment> segments,
-                                List<Integer> order, String source, boolean fallback) {}
+    /** Index span [fromIndex, toIndex] into the route's geometry that is not passable for the profile.
+     *  type: steps | steep | surface | narrow. */
+    public record Barrier(int fromIndex, int toIndex, String type, String label, String detail) {}
+
+    /**
+     * geometry is a list of [lat, lng] pairs (Flutter order).
+     * profile: "foot-walking" (primary) or "wheelchair" (alternative).
+     * relaxed = wheelchair restrictions were dropped to find a route;
+     * fallbackReason = Polish explanation when fallback=true, else null.
+     * accessible = barriers empty and route data available (false on fallback).
+     * alternative = wheelchair route when the primary has barriers, else null.
+     */
+    public record RouteResponse(String profile, double distanceM, double durationS, List<double[]> geometry,
+                                List<Segment> segments, List<Integer> order, String source, boolean fallback,
+                                boolean relaxed, String fallbackReason, List<Barrier> barriers, boolean accessible,
+                                RouteResponse alternative) {
+        public RouteResponse withBarriers(List<Barrier> b, boolean acc) {
+            return new RouteResponse(profile, distanceM, durationS, geometry, segments, order, source, fallback,
+                    relaxed, fallbackReason, b, acc, alternative);
+        }
+
+        public RouteResponse withAlternative(RouteResponse alt) {
+            return new RouteResponse(profile, distanceM, durationS, geometry, segments, order, source, fallback,
+                    relaxed, fallbackReason, barriers, accessible, alt);
+        }
+    }
 }

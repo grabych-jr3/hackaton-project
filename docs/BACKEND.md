@@ -335,35 +335,75 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
 ```json
 {
   "points": [ { "lat": 50.0617, "lng": 19.9373 }, { "lat": 50.0541, "lng": 19.9354 } ],
-  "profile": { "maxKerbCm": 3, "minWidthCm": 80, "maxInclinePct": 6 },
+  "profile": { "maxSteps": 0, "maxKerbCm": 3, "minWidthCm": 80, "maxInclinePct": 6 },
   "avoidCrowds": true,
   "optimizeOrder": false
 }
 ```
-Сервер вызывает `POST https://api.openrouteservice.org/v2/directions/wheelchair/geojson` с телом:
+`maxSteps`: `0` — никаких ступеней (коляска), `>0` — пара ступеней допустима (детская коляска), не задан — как 0. `minWidthCm` по умолчанию 75.
+
+**Логика (продуктовое правило: по умолчанию — обычный пешеходный маршрут, недоступные участки красным, доступная альтернатива рядом):**
+1. **Основной маршрут** — `POST /v2/directions/foot-walking/geojson` (без restrictions).
+2. По `extras` основного маршрута строятся `barriers` — диапазоны индексов его `geometry`, непроходимые для профиля.
+3. Если `barriers` не пуст — дополнительно считается **альтернатива** `POST /v2/directions/wheelchair/geojson` с restrictions; если ORS не нашёл маршрут (коды 2004/2009/2010/2099) — один повтор **без** `profile_params.restrictions` → альтернатива с `"relaxed": true, "accessible": false`. Если и это не удалось — `"alternative": null`.
+4. Если не удался основной маршрут (или нет ключа) — прямая линия с `"fallback": true` и `fallbackReason`.
+
+Тело запроса в ORS (оба профиля):
 ```json
 {
   "coordinates": [[19.9373,50.0617],[19.9354,50.0541]],
+  "radiuses": [-1, -1],
   "instructions": true, "language": "pl", "units": "m",
+  "extra_info": ["steepness", "surface", "waytype"],
   "options": { "profile_params": { "restrictions": {
       "maximum_sloped_kerb": 0.03, "minimum_width": 0.8, "maximum_incline": 6 } } }
 }
 ```
-(ORS принимает бордюр и ширину **в метрах**.)
+(`options` — только для wheelchair. ORS принимает бордюр и ширину **в метрах**. `radiuses: -1` — привязка к ближайшей дороге без ограничения расстояния: без этого точки во дворах/полях дают 2010 «Could not find routable point within a radius of 150 m».)
+
+**Правила `barriers`** (идентификаторы ORS extra_info, проверены на реальном ответе у Вавеля):
+| type | источник | когда барьер | label / detail |
+|---|---|---|---|
+| `steps` | `waytype` = 8 | всегда | `"Schody"` / `null`; при `maxSteps > 0` — `"sprawdź liczbę stopni"` |
+| `steep` | `steepness` класс ±1=1–3 %, ±2=4–6 %, ±3=7–9 %, ±4=10–15 %, ±5=≥16 % | нижняя граница класса > `maxInclinePct` (по умолч. 6) | `"Stromy odcinek"` / `"ok. 2%"`…`"ok. 12%"`, `"ponad 15%"` |
+| `surface` | `surface` 2 unpaved, 5 cobblestone, 8–10 gravel, 11–12 dirt/ground, 13 ice, 15 sand, 16 woodchips, 17 grass, 18 grass paver | только при `maxKerbCm <= 3` (пресет коляски; без профиля — тоже) | `"Nawierzchnia: kostka brukowa"` и т. п. / `null` |
+| `narrow` | — | зарезервирован: ORS extras не дают ширину, сейчас не выдаётся | |
+
+Соседние/перекрывающиеся диапазоны одного типа сливаются (для `steep` остаётся самый крутой `detail`, для `surface` — только с одинаковым label). Список отсортирован по `fromIndex`.
+Те же extras дают `segments[].warning` (польский текст, напр. `"Schody"`, `"Stromy odcinek (ok. 8%)"`, `"Nawierzchnia: kostka brukowa"`, несколько через `"; "`), сопоставляя `way_points` шага с диапазонами extras.
+
 Ответ клиенту:
 ```json
 {
-  "distanceM": 1240, "durationS": 1110,
-  "geometry": [[50.0617,19.9373],[50.0612,19.9370]],
+  "profile": "foot-walking",
+  "distanceM": 643.2, "durationS": 463.1,
+  "geometry": [[50.0560,19.9340],[50.0559,19.9341]],
   "segments": [
-    { "instruction": "Skręć w lewo w Grodzką", "distanceM": 320, "warning": null }
+    { "instruction": "Skręć w lewo na Podzamcze", "distanceM": 120, "warning": "Schody" }
   ],
   "order": [0, 1],
   "source": "openrouteservice",
-  "fallback": false
+  "fallback": false,
+  "relaxed": false,
+  "fallbackReason": null,
+  "barriers": [
+    { "fromIndex": 12, "toIndex": 13, "type": "steps", "label": "Schody", "detail": null },
+    { "fromIndex": 25, "toIndex": 41, "type": "steep", "label": "Stromy odcinek", "detail": "ponad 15%" }
+  ],
+  "accessible": false,
+  "alternative": {
+    "profile": "wheelchair", "distanceM": 910, "durationS": 700, "geometry": [[50.0560,19.9340]], "segments": [],
+    "order": [0, 1], "source": "openrouteservice", "fallback": false, "relaxed": false, "fallbackReason": null,
+    "barriers": [], "accessible": true, "alternative": null
+  }
 }
 ```
-Если ORS недоступен, сервер возвращает прямую линию между точками с `"fallback": true`, а UI показывает предупреждение. Ответы кэшируются на 10 мин по хэшу запроса: у бесплатного ключа ~2000 запросов в сутки.
+- `accessible` = `barriers` пуст и данные есть. У альтернативы `barriers` всегда `[]`, `accessible` = `!relaxed`.
+- `relaxed` (bool, по умолч. false) — маршрут построен без ограничений профиля; UI должен предупредить.
+- `fallbackReason` (string|null) — при `fallback: true`, по-польски, напр. `"Brak klucza OpenRouteService"`, `"OpenRouteService: nie znaleziono trasy (kod 2009) - Route could not be found …"`, `"OpenRouteService: usługa niedostępna"`.
+- Fallback: прямая линия, `"source": "straight-line"`, `"barriers": []`, `"accessible": false`, `"alternative": null` — клиент показывает «Brak danych o dostępności trasy».
+
+Ошибки ORS логируются WARN (профиль ORS, код, HTTP-статус) — без ключа, координат и порогов профиля. Ответы (кроме fallback) кэшируются на 10 мин по запросу: у бесплатного ключа ~2000 запросов в сутки.
 Профиль нигде не сохраняется и не логируется.
 
 ### 5.5 Толпы (P1)
