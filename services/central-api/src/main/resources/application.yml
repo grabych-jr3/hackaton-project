@@ -16,8 +16,8 @@ spring:
     default-property-inclusion: always
   servlet:
     multipart:
-      max-file-size: 3MB
-      max-request-size: 4MB
+      max-file-size: 5MB
+      max-request-size: 6MB
   kafka:
     bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:19092}
     producer:

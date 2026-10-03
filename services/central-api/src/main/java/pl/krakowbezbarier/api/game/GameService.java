@@ -84,8 +84,7 @@ public class GameService {
         if (placeId != null && !places.exists(placeId)) throw ApiException.notFound("Place " + placeId + " not found");
 
         int severity = report.severity();
-        Rarity rarity = GameRules.rarityFor(severity, random);
-        Species species = GameRules.pickSpecies(catalog, rarity, random);
+        Species species = rollSpecies(report);
         int pts = species.rarity().points;
 
         UUID reportId = UUID.randomUUID();
@@ -93,10 +92,7 @@ public class GameService {
                 INSERT INTO game_report (id, user_id, place_id, report, severity, rarity, species_id, points)
                 VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?)""",
                 reportId, userId, placeId, toJson(report), severity, species.rarity().name(), species.id(), pts);
-        jdbc.update("""
-                INSERT INTO user_species (user_id, species_id, count) VALUES (?, ?, 1)
-                ON CONFLICT (user_id, species_id) DO UPDATE SET count = user_species.count + 1""",
-                userId, species.id());
+        addCreature(userId, species.id());
 
         if (placeId != null) {
             Instant now = Instant.now();
@@ -112,6 +108,23 @@ public class GameService {
             }
         }
         return new ReportResponse(species, pts, state(userId));
+    }
+
+    /** Rarity from the report's severity (+ luck roll), then a random species of that rarity. */
+    public Species rollSpecies(BarrierReport report) {
+        return GameRules.pickSpecies(catalog, GameRules.rarityFor(report.severity(), random), random);
+    }
+
+    /** Adds one creature to the user's collection. Never touches points. */
+    public void addCreature(UUID userId, String speciesId) {
+        jdbc.update("""
+                INSERT INTO user_species (user_id, species_id, count) VALUES (?, ?, 1)
+                ON CONFLICT (user_id, species_id) DO UPDATE SET count = user_species.count + 1""",
+                userId, speciesId);
+    }
+
+    public Optional<Species> species(String id) {
+        return id == null ? Optional.empty() : catalog.species().stream().filter(s -> s.id().equals(id)).findFirst();
     }
 
     @Transactional

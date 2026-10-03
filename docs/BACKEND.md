@@ -434,31 +434,37 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
                 "rarity": "epic", "expiresAt": "…" } ] }
 ```
 
-`POST /catches` — `multipart/form-data`:
+`POST /catches` (auth) — `multipart/form-data`:
 | часть | тип | обязательна |
 |---|---|---|
-| photo | image/jpeg, ≤ 3 МБ (клиент сжимает до ~1280 px) | да |
+| photo | JPEG или PNG (проверка по сигнатуре), ≤ 5 МБ (клиент сжимает до ~1280 px) | да |
 | lat, lng | double | да |
-| spawnId | uuid | нет |
+| takenAt | ISO-8601 UTC | да |
+| spawnId | uuid | нет (спавны ещё не генерируются) |
 | placeId | string | нет |
-| takenAt | ISO-8601 | да |
 
 Проверки до отправки в Kafka:
-- `spawnId` существует и не истёк;
-- расстояние до спавна ≤ 50 м;
-- `takenAt` не старше 10 мин;
-- лимит 30 фото в сутки на пользователя.
+- `takenAt` не старше 10 мин (и не более 2 мин в будущем) → `400`;
+- размер > 5 МБ → `413 PAYLOAD_TOO_LARGE`; не JPEG/PNG → `400`;
+- если передан `spawnId`: существует (`404`), не истёк (`410 SPAWN_EXPIRED`), расстояние ≤ 50 м (`400`); без `spawnId` проверки расстояния нет;
+- `placeId` (если есть) существует → иначе `404`;
+- лимит 30 фото в сутки на пользователя → `429`.
 
 Ответ `202 { "catchId": "…", "status": "PENDING" }`.
 
-`GET /catches/{id}` — Flutter опрашивает раз в 1–2 с:
+`GET /catches/{id}` (auth, только владелец, чужой → `404`) — Flutter опрашивает раз в 1–2 с:
 ```json
-{ "catchId": "…", "status": "OK", "points": 60, "rarity": "epic",
-  "result": { "steps": 4, "kerbRange": ">7", "widthRange": null, "ramp": false,
-              "handrail": true, "obstacles": ["kostka"], "difficulty": 7.4,
-              "confidence": 0.82 },
-  "createdFacts": ["6a0e…"] }
+{ "catchId": "…", "status": "OK", "reason": null,
+  "result": { "steps": 5, "kerbRange": null, "widthRange": null, "ramp": false,
+              "handrail": false, "obstacles": [], "difficulty": 10.0, "confidence": 1.0 },
+  "species": { "id": "niedzwiedz", "name": "Niedźwiedź", "emoji": "🐻", "rarity": "epic" },
+  "points": 60, "awarded": 0,
+  "state": { "points": 120, "caught": { "niedzwiedz": 1 }, "vouchers": [] },
+  "createdFacts": [] }
 ```
+- `status`: `PENDING` / `OK` / `REJECTED` / `FAILED`; `reason` — польский текст для пользователя при `REJECTED`/`FAILED`.
+- `species`, `points` (= `sellValue` вида), `state` (как `GET /game/state`) — только при `OK`, иначе `null`. `awarded` всегда 0.
+- **Поимка по фото очков не даёт** (как `/game/reports`): +1 в `user_species`, очки — только через `POST /game/sell`.
 
 ### 5.7 Профиль, награды (P1)
 `GET /me` → `{ "userId", "points", "catches": 14, "barriersMapped": 23, "exploredCells": 38, "totalCells": 400 }`
@@ -529,16 +535,16 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
 `status`: `OK` / `REJECTED` (размытое фото, дубликат, на фото нет барьера) / `FAILED` (ошибка Gemini).
 
 ### 6.3 Обработка в central-api (`@KafkaListener`, в одной транзакции)
-1. Найти `catch_record`. Если статус уже не `PENDING`, **выйти** (идемпотентность).
-2. При `OK`:
-   - обновить `ai_result` и `status`;
-   - создать `accessibility_fact` с `source="ai"`, `source_ref="catch:<id>"` (только для непустых полей: `steps` → число, `kerbRange` → строка-диапазон, `ramp` → boolean);
-   - начислить очки через `points_ledger` с `(reason='catch', ref_id=catchId)`;
+1. Найти `catch_record` (`FOR UPDATE`). Если статус уже не `PENDING`, **выйти** (идемпотентность: повтор сообщения ничего не меняет).
+2. При `REJECTED`/`FAILED` — статус и `reason` от vision-service (например «Zdjęcie jest nieostre — zrób ponownie», «Zdjęcie jest zbyt ciemne — zrób ponownie»), существо не выдаётся.
+3. При `OK`:
+   - **дубликат**: pHash с расстоянием Хэмминга ≤ 6 у другого `OK`-улова в радиусе 30 м → `status=REJECTED`, `reason="To miejsce zostało już sfotografowane"`, существо не выдаётся;
+   - если есть `placeId` — `accessibility_fact` с `source="ai"`, `source_ref="catch:<id>"` (только непустые: `steps`, `kerbRange` → `kerbHeight`, `ramp`);
+   - результат ИИ → `BarrierReport` и те же правила, что `/game/reports` (`GameRules`): `steps` → steps; `kerbRange` "0-3"/"3-7"/">7" → curb low/mid/high; `widthRange` "<70"/"70-90"/">90" → passage narrow/medium/wide; `ramp=false` → noRamp; непустой `obstacles` → obstacles; `difficulty ≥ 6` → uneven. severity + random(0..3) → редкость → случайный вид;
+   - `user_species` +1, `catch_record.species_id`, `points=0`; **очки не начисляются** (никаких записей в `points_ledger`);
    - увеличить `explored_count`.
-3. При `REJECTED`/`FAILED` — статус и `reason`, очки не начисляются.
-4. Если `confidence < 0.5`, очки делятся пополам.
 
-Очки за редкость: common 10, rare 25, epic 60, legendary 150.
+Хранение: `catch_record.species_id` (миграция V3).
 
 ---
 
