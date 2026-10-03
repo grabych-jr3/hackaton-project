@@ -1,14 +1,19 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../data/repositories/catch_repository.dart';
 import '../../data/repositories/places_repository.dart';
 import '../game/game_models.dart';
 import '../game/game_providers.dart';
 import '../place/status_chip.dart';
+import 'ar_catch_screen.dart';
 
 const currentLocationLabel = 'Obecna lokalizacja';
+const demoCameraMessage =
+    'Tryb demo: analiza zdjęć AI wymaga serwera — zgłoś barierę w ankiecie.';
 
 /// Modern minimalist AR Camera & Barrier Scanner screen.
 class CatchScreen extends ConsumerStatefulWidget {
@@ -19,7 +24,7 @@ class CatchScreen extends ConsumerStatefulWidget {
 }
 
 class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProviderStateMixin {
-  bool _isCameraMode = true;
+  late bool _isCameraMode = ref.read(catchRepositoryProvider) != null;
   String? _placeId;
   bool _hasSteps = false;
   int _steps = 1;
@@ -80,23 +85,49 @@ class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProv
         _noRamp = _uneven = _obstacles = false;
       });
 
-  Future<void> _submit([bool isAiScan = false]) async {
+  bool get _aiAvailable => ref.read(catchRepositoryProvider) != null;
+
+  void _showInfo(String msg) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  /// 'Kamera' tab: without the backend there is no AI analysis, so the
+  /// survey stays (never fake a scan).
+  void _selectCamera() {
+    if (!_aiAvailable) {
+      setState(() => _isCameraMode = false);
+      _showInfo(demoCameraMessage);
+      return;
+    }
+    setState(() => _isCameraMode = true);
+  }
+
+  Future<void> _openCamera() async {
+    final router = GoRouter.maybeOf(context);
+    final navigator = Navigator.of(context);
+    final query = _placeId == null ? '' : '?placeId=${Uri.encodeQueryComponent(_placeId!)}';
+    final exit = router != null
+        ? await router.push<CatchExit>('/catch/camera$query')
+        : await navigator.push<CatchExit>(
+            MaterialPageRoute(builder: (_) => ArCatchScreen(placeId: _placeId)));
+    if (!mounted) return;
+    switch (exit) {
+      case CatchExit.survey:
+        setState(() => _isCameraMode = false);
+        _showInfo('Kamera lub AI niedostępne — zgłoś barierę w ankiecie.');
+      case CatchExit.collection:
+        router?.go('/collection');
+      case null:
+        break;
+    }
+  }
+
+  Future<void> _submit() async {
     setState(() => _sending = true);
 
-    // If simulated AI scan from camera, populate sensible defaults if empty
-    final reportToSend = isAiScan && _report.isEmpty
-        ? BarrierReport(
-            placeId: _placeId,
-            steps: 0,
-            curb: CurbRange.low,
-            passage: PassageWidth.wide,
-            noRamp: false,
-            uneven: false,
-            obstacles: false,
-          )
-        : _report;
-
-    final result = await ref.read(gameProvider.notifier).submitReport(reportToSend);
+    final result = await ref.read(gameProvider.notifier).submitReport(_report);
     if (!mounted) return;
     setState(() => _sending = false);
     if (result == null) return;
@@ -198,7 +229,7 @@ class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProv
                   icon: Icons.camera_alt_rounded,
                   label: 'Kamera',
                   isSelected: _isCameraMode,
-                  onTap: () => setState(() => _isCameraMode = true),
+                  onTap: _selectCamera,
                 ),
                 _ModeTab(
                   icon: Icons.checklist_rounded,
@@ -335,31 +366,6 @@ class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProv
           ),
         ),
 
-        // 3. Sleek AI Live Detection HUD Tags (Minimalist Floating Pills)
-        Positioned(
-          top: 64,
-          left: 16,
-          right: 16,
-          child: Wrap(
-            alignment: WrapAlignment.center,
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              const DemoBadge(),
-              _AiTag(
-                icon: Icons.check_circle_outline,
-                label: 'Brak schodów',
-                isOk: true,
-              ),
-              _AiTag(
-                icon: Icons.height,
-                label: 'Krawężnik: <3cm',
-                isOk: true,
-              ),
-            ],
-          ),
-        ),
-
         // 4. Central AR Viewfinder Reticle & Creature
         Center(
           child: Column(
@@ -447,37 +453,17 @@ class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProv
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Minimal Quick-Tap Barrier Tags
-              Wrap(
-                spacing: 8,
-                alignment: WrapAlignment.center,
-                children: [
-                  _QuickPill(
-                    label: 'Schody',
-                    isSelected: _hasSteps,
-                    onTap: () => setState(() => _hasSteps = !_hasSteps),
-                  ),
-                  _QuickPill(
-                    label: 'Krawężnik >7cm',
-                    isSelected: _curb == CurbRange.high,
-                    onTap: () => setState(() => _curb =
-                        _curb == CurbRange.high ? CurbRange.none : CurbRange.high),
-                  ),
-                  _QuickPill(
-                    label: 'Brak rampy',
-                    isSelected: _noRamp,
-                    onTap: () => setState(() => _noRamp = !_noRamp),
-                  ),
-                ],
+              const Text(
+                'Zdjęcie przeanalizuje AI — wynik będzie niezweryfikowany.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppColors.textMuted, fontSize: 12),
               ),
               const SizedBox(height: 18),
-              // Big Minimalist Shutter / Scan Button
+              // Opens the real AR camera.
               _FocusTap(
-                label: _sending
-                    ? 'Wysyłanie zgłoszenia…'
-                    : 'Zrób zdjęcie, zgłoś barierę i złap stworka',
+                label: 'Otwórz kamerę AR i złap stworka',
                 circle: true,
-                onTap: _sending ? null : () => _submit(true),
+                onTap: _openCamera,
                 child: Container(
                   width: 68,
                   height: 68,
@@ -588,6 +574,19 @@ class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProv
               ),
           ],
         ),
+        if (ref.watch(catchRepositoryProvider) == null) ...[
+          const SizedBox(height: 12),
+          const Row(
+            children: [
+              Icon(Icons.no_photography_outlined, color: AppColors.warn, size: 18),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(demoCameraMessage,
+                    style: TextStyle(color: AppColors.textMuted, fontSize: 13)),
+              ),
+            ],
+          ),
+        ],
         const SizedBox(height: 12),
         Container(
           padding: const EdgeInsets.all(14),
@@ -675,7 +674,7 @@ class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProv
             backgroundColor: AppColors.primary,
             foregroundColor: const Color(0xFF090D12),
           ),
-          onPressed: _report.isEmpty || _sending || points == null ? null : () => _submit(false),
+          onPressed: _report.isEmpty || _sending || points == null ? null : _submit,
           icon: const Icon(Icons.send_rounded),
           label: const Text('Wyślij zgłoszenie i złap'),
         ),
@@ -733,86 +732,6 @@ class _ModeTab extends StatelessWidget {
   }
 }
 
-class _AiTag extends StatelessWidget {
-  const _AiTag({
-    required this.icon,
-    required this.label,
-    required this.isOk,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool isOk;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: AppColors.surfaceGlass,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: isOk ? AppColors.primary : AppColors.bad),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              color: isOk ? AppColors.primary : AppColors.bad,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _QuickPill extends StatelessWidget {
-  const _QuickPill({
-    required this.label,
-    required this.isSelected,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool isSelected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return _FocusTap(
-      label: 'Bariera: $label',
-      selected: isSelected,
-      toggled: isSelected,
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: isSelected ? AppColors.primary : AppColors.surfaceElevated.withValues(alpha: 0.8),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isSelected ? AppColors.primaryBright : AppColors.border,
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            color: isSelected ? const Color(0xFF090D12) : AppColors.text,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// Keyboard-focusable button wrapper: InkWell (Enter/Space activation),
 /// visible focus ring, 48x48 minimum target and a screen-reader label.
 class _FocusTap extends StatefulWidget {
@@ -821,7 +740,6 @@ class _FocusTap extends StatefulWidget {
     required this.onTap,
     required this.child,
     this.selected,
-    this.toggled,
     this.circle = false,
   });
 
@@ -829,7 +747,6 @@ class _FocusTap extends StatefulWidget {
   final VoidCallback? onTap;
   final Widget child;
   final bool? selected;
-  final bool? toggled;
   final bool circle;
 
   @override
@@ -847,7 +764,6 @@ class _FocusTapState extends State<_FocusTap> {
       button: true,
       enabled: widget.onTap != null,
       selected: widget.selected,
-      toggled: widget.toggled,
       label: widget.label,
       excludeSemantics: true,
       onTap: widget.onTap,

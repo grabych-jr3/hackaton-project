@@ -86,6 +86,16 @@ class GameNotifier extends AsyncNotifier<GameState> {
     return true;
   }
 
+  /// After a photo catch: the server already added the creature, so take its
+  /// state (or reload when it was not included).
+  void applyCatch(GameState? serverState) {
+    if (serverState != null) {
+      state = AsyncData(serverState);
+    } else {
+      ref.invalidateSelf();
+    }
+  }
+
   /// Returns points earned; throws [SellException].
   Future<int> sell(String speciesId, int count) async {
     final current = state.value;

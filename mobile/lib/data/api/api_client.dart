@@ -4,6 +4,7 @@ import 'dart:math';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/config.dart';
@@ -65,11 +66,44 @@ class ApiClient {
       await _clearToken();
       return _send(method, path, body: body, auth: auth, retried: true);
     }
-    final text = utf8.decode(res.bodyBytes);
+    return _decode(res.statusCode, res.bodyBytes);
+  }
+
+  /// `multipart/form-data` POST (e.g. a catch photo). Authenticated by
+  /// default; re-authenticates once on 401 (the request is rebuilt).
+  Future<dynamic> postMultipart(
+    String path, {
+    Map<String, String> fields = const {},
+    List<MultipartPart> files = const [],
+    bool auth = true,
+    Duration uploadTimeout = const Duration(seconds: 30),
+  }) =>
+      _sendMultipart(path, fields, files, auth, uploadTimeout, false);
+
+  Future<dynamic> _sendMultipart(String path, Map<String, String> fields,
+      List<MultipartPart> files, bool auth, Duration limit, bool retried) async {
+    final req = http.MultipartRequest('POST', _uri(path))
+      ..headers['Accept'] = 'application/json'
+      ..fields.addAll(fields);
+    if (auth) req.headers['Authorization'] = 'Bearer ${await _ensureToken()}';
+    for (final f in files) {
+      req.files.add(http.MultipartFile.fromBytes(f.field, f.bytes,
+          filename: f.filename, contentType: MediaType.parse(f.contentType)));
+    }
+    final res = await http.Response.fromStream(await _client.send(req)).timeout(limit);
+    if (res.statusCode == 401 && auth && !retried) {
+      await _clearToken();
+      return _sendMultipart(path, fields, files, auth, limit, true);
+    }
+    return _decode(res.statusCode, res.bodyBytes);
+  }
+
+  static dynamic _decode(int status, List<int> bytes) {
+    final text = utf8.decode(bytes);
     final decoded = text.isEmpty ? null : _tryDecode(text);
-    if (res.statusCode < 200 || res.statusCode >= 300) {
+    if (status < 200 || status >= 300) {
       final code = decoded is Map ? decoded['code']?.toString() : null;
-      throw ApiException(res.statusCode, code);
+      throw ApiException(status, code);
     }
     return decoded;
   }
@@ -105,6 +139,17 @@ class ApiClient {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(tokenKey);
   }
+}
+
+/// One file part of a multipart request.
+class MultipartPart {
+  const MultipartPart(this.field, this.bytes,
+      {required this.filename, this.contentType = 'image/jpeg'});
+
+  final String field;
+  final List<int> bytes;
+  final String filename;
+  final String contentType;
 }
 
 /// Random UUID v4 (device id).
