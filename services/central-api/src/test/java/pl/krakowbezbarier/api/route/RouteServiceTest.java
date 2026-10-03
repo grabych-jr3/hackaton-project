@@ -8,6 +8,7 @@ import pl.krakowbezbarier.api.route.RouteDtos.*;
 
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -199,25 +200,98 @@ class RouteServiceTest {
         assertNull(r.alternative());
     }
 
+    static final OrsException NO_ROUTE = new OrsException(2009, 404, "Route could not be found");
+
+    /** n retryable failures (exact destination + offsets that also fail). */
+    static Object[] failures(int n) { Object[] o = new Object[n]; Arrays.fill(o, NO_ROUTE); return o; }
+
+    static Object[] concat(Object[] a, Object... b) {
+        Object[] o = Arrays.copyOf(a, a.length + b.length);
+        System.arraycopy(b, 0, o, a.length, b.length);
+        return o;
+    }
+
     @Test
     void alternativeRelaxedRetryWithoutRestrictions() throws Exception {
-        var fake = new FakeOrs(json(OK_JSON), new OrsException(2009, 404, "Route could not be found"), json(FLAT_JSON));
+        int offs = RouteService.DEST_OFFSETS_M.length;
+        var fake = new FakeOrs(concat(concat(new Object[]{json(OK_JSON)}, failures(1 + offs)), json(FLAT_JSON)));
         RouteResponse r = new RouteService(fake, 10).route(req);
-        assertEquals(List.of("foot-walking", "wheelchair", "wheelchair"), fake.profiles);
+        assertEquals(2 + offs + 1, fake.calls.size());
         assertTrue(fake.calls.get(1).containsKey("options"));
-        assertFalse(fake.calls.get(2).containsKey("options"));
+        assertFalse(fake.calls.get(fake.calls.size() - 1).containsKey("options"));
         assertTrue(r.alternative().relaxed());
         assertFalse(r.alternative().accessible());
+        assertTrue(r.alternative().note().startsWith("Brak trasy bez barier do samego celu"));
         assertFalse(r.fallback());
     }
 
     @Test
-    void alternativeOmittedWhenBothWheelchairCallsFail() throws Exception {
-        var fake = new FakeOrs(json(OK_JSON), new OrsException(2010, 404, "x"), new OrsException(2009, 404, "y"));
+    void alternativeOmittedWhenAllWheelchairCallsFail() throws Exception {
+        int offs = RouteService.DEST_OFFSETS_M.length;
+        var fake = new FakeOrs(concat(new Object[]{json(OK_JSON)}, failures(2 + offs)));
+        RouteResponse r = new RouteService(fake, 10).route(req);
+        assertEquals(3 + offs, fake.calls.size());
+        assertNull(r.alternative());
+        assertNotNull(r.note());
+        assertFalse(r.fallback());
+    }
+
+    @Test
+    void nonRetryableWheelchairErrorStopsImmediately() throws Exception {
+        var fake = new FakeOrs(json(OK_JSON), new OrsException(2003, 400, "bad"));
+        RouteResponse r = new RouteService(fake, 10).route(req);
+        assertEquals(2, fake.calls.size());
+        assertNull(r.alternative());
+    }
+
+    /** Stara Synagoga case: exact destination unreachable for wheelchair, first offset works -> note with gap. */
+    @Test
+    @SuppressWarnings("unchecked")
+    void destinationSnappedToNearbyAccessiblePoint() throws Exception {
+        String end = """
+                {"features":[{"geometry":{"coordinates":[[19.9373,50.0617],[19.9354,50.05446]]},
+                 "properties":{"summary":{"distance":1560,"duration":1300},
+                 "extras":{"steepness":{"values":[[0,1,0]]},"surface":{"values":[[0,1,3]]},"waytype":{"values":[[0,1,3]]}},
+                 "segments":[{"steps":[{"instruction":"Prosto","distance":1560,"way_points":[0,1]}]}]}}]}""";
+        var fake = new FakeOrs(json(OK_JSON), NO_ROUTE, json(end));
         RouteResponse r = new RouteService(fake, 10).route(req);
         assertEquals(3, fake.calls.size());
-        assertNull(r.alternative());
-        assertFalse(r.fallback());
+        var coords = (List<List<Double>>) fake.calls.get(2).get("coordinates");
+        assertTrue(coords.get(1).get(1) > req.points().get(1).lat(), "first offset is north");
+        RouteResponse alt = r.alternative();
+        assertTrue(alt.accessible());
+        assertTrue(alt.barriers().isEmpty());
+        assertNotNull(alt.note());
+        assertTrue(alt.note().contains("ostatnie") && alt.note().contains("m może wymagać pomocy"), alt.note());
+    }
+
+    /** Wheelchair route that still has steps: barriers reported; a barrier-free offset is preferred. */
+    @Test
+    void alternativeWithBarriersIsReportedAndOffsetPreferred() throws Exception {
+        var fake = new FakeOrs(json(OK_JSON), json(OK_JSON), json(FLAT_JSON));
+        RouteResponse alt = new RouteService(fake, 10).route(req).alternative();
+        assertTrue(alt.barriers().isEmpty());
+        assertEquals(3, fake.calls.size());
+
+        int offs = RouteService.DEST_OFFSETS_M.length;
+        fake = new FakeOrs(concat(new Object[]{json(OK_JSON), json(OK_JSON)}, failures(offs)));
+        alt = new RouteService(fake, 10).route(req).alternative();
+        assertFalse(alt.accessible());
+        assertFalse(alt.barriers().isEmpty());
+        assertTrue(alt.note().contains("wymagać pomocy"), alt.note());
+    }
+
+    @Test
+    void gapNoteOnlyForNoticeableGap() {
+        LatLng d = new LatLng(50.0514, 19.9485);
+        RouteResponse near = new RouteResponse("wheelchair", 1, 1, List.<double[]>of(new double[]{50.05141, 19.9485}),
+                List.of(), List.of(), "x", false, false, null, List.of(), true, null);
+        assertNull(RouteService.gapNote(near, d));
+        LatLng o = RouteService.offset(d, 40, 0);
+        assertEquals(40, pl.krakowbezbarier.api.common.GeoUtils.haversineM(d.lat(), d.lng(), o.lat(), o.lng()), 0.5);
+        RouteResponse far = new RouteResponse("wheelchair", 1, 1, List.<double[]>of(new double[]{o.lat(), o.lng()}),
+                List.of(), List.of(), "x", false, false, null, List.of(), true, null);
+        assertEquals("Brak trasy bez barier do samego celu — ostatnie 40 m może wymagać pomocy", RouteService.gapNote(far, d));
     }
 
     @Test

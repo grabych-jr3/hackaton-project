@@ -78,33 +78,94 @@ public class RouteService {
             log.warn("ORS response unparseable ({})", e.getClass().getSimpleName());
             return fallback(req, "OpenRouteService: nieprawidłowa odpowiedź");
         }
-        if (!res.barriers().isEmpty()) res = res.withAlternative(wheelchair(req));
+        if (!res.barriers().isEmpty()) {
+            RouteResponse alt = wheelchair(req);
+            res = res.withAlternative(alt);
+            if (alt == null) res = res.withNote("Brak trasy bez barier do celu — odcinki z barierami mogą wymagać pomocy");
+        }
         cache.put(req, new CacheEntry(res, now.plus(cacheTtl)));
         return res;
     }
 
-    /** Wheelchair route: restricted, then once without restrictions (relaxed). null if both fail. */
+    /**
+     * Destination offsets tried when the wheelchair route to the exact destination fails or still has barriers
+     * (typical: the destination snaps to a courtyard/stairs piece of the wheelchair graph). {dNorthM, dEastM}.
+     */
+    static final double[][] DEST_OFFSETS_M = {{40, 0}, {-40, 0}, {0, 40}, {0, -40}, {60, 60}, {-60, -60}};
+    /** Gap (m) between the alternative's end and the real destination above which the client gets a note. */
+    static final double NOTE_GAP_M = 15;
+
+    /** Sentinel: ORS gave a non-retryable error - stop trying. */
+    private static final RouteResponse ABORT = new RouteResponse(WHEELCHAIR, 0, 0, List.of(), List.of(), List.of(),
+            "abort", true, false, null, List.of(), false, null);
+
+    /**
+     * Wheelchair route with its own barriers computed (so the client can tell whether it is really clean):
+     * <ol>
+     *   <li>restricted, to the exact destination;</li>
+     *   <li>if that fails (retryable) or has barriers: restricted, destination moved by {@link #DEST_OFFSETS_M}
+     *       (first barrier-free one wins) + a note "ostatnie N m może wymagać pomocy";</li>
+     *   <li>otherwise once without restrictions (relaxed=true, accessible=false), or the restricted route with barriers.</li>
+     * </ol>
+     * null if nothing was found.
+     */
     RouteResponse wheelchair(RouteRequest req) {
-        int n = req.points().size();
+        LatLng dest = req.points().get(req.points().size() - 1);
+        RouteResponse best = tryWheelchair(req, true, false);
+        if (best == ABORT) return null;
+        if (best != null && best.barriers().isEmpty()) return best;
+
+        for (double[] off : DEST_OFFSETS_M) {
+            RouteResponse r = tryWheelchair(withDestination(req, offset(dest, off[0], off[1])), true, false);
+            if (r == ABORT) break;
+            if (r != null && r.barriers().isEmpty()) return r.withNote(gapNote(r, dest));
+        }
+        if (best == null) {
+            best = tryWheelchair(req, false, true);
+            if (best == ABORT) best = null;
+        }
+        if (best == null) return null;
+        String note = "Brak trasy bez barier do samego celu" + (best.barriers().isEmpty() ? "" : " — "
+                + best.barriers().size() + (best.barriers().size() == 1 ? " miejsce może" : " miejsca mogą")
+                + " wymagać pomocy");
+        return best.withNote(note);
+    }
+
+    /** One wheelchair ORS call with barriers computed; null = retryable failure, ABORT = give up. */
+    private RouteResponse tryWheelchair(RouteRequest req, boolean restricted, boolean relaxed) {
         try {
-            return parseOrs(ors.directions(WHEELCHAIR, orsBody(req, true)), n, false, WHEELCHAIR);
+            JsonNode body = ors.directions(WHEELCHAIR, orsBody(req, restricted));
+            List<Barrier> b = barriers(body, req.profile());
+            return parseOrs(body, req.points().size(), relaxed, WHEELCHAIR).withBarriers(b, b.isEmpty() && !relaxed);
         } catch (OrsException e) {
-            logOrs(WHEELCHAIR, e, true);
-            if (!retryable(e)) return null;
+            logOrs(WHEELCHAIR, e, restricted);
+            return retryable(e) ? null : ABORT;
         } catch (RuntimeException e) {
             log.warn("ORS wheelchair response unparseable ({})", e.getClass().getSimpleName());
-            return null;
+            return ABORT;
         }
-        try {
-            // relaxed: the route ignores the user's thresholds, so it is not marked accessible
-            return parseOrs(ors.directions(WHEELCHAIR, orsBody(req, false)), n, true, WHEELCHAIR)
-                    .withBarriers(List.of(), false);
-        } catch (OrsException e) {
-            logOrs(WHEELCHAIR, e, false);
-        } catch (RuntimeException e) {
-            log.warn("ORS wheelchair response unparseable ({})", e.getClass().getSimpleName());
-        }
-        return null;
+    }
+
+    static RouteRequest withDestination(RouteRequest req, LatLng dest) {
+        List<LatLng> pts = new ArrayList<>(req.points());
+        pts.set(pts.size() - 1, dest);
+        return new RouteRequest(pts, req.profile(), req.avoidCrowds(), req.optimizeOrder());
+    }
+
+    static LatLng offset(LatLng p, double northM, double eastM) {
+        double dLat = northM / 111_320.0;
+        double dLng = eastM / (111_320.0 * Math.cos(Math.toRadians(p.lat())));
+        return new LatLng(p.lat() + dLat, p.lng() + dLng);
+    }
+
+    /** "ostatnie N m" note when the route ends noticeably before the destination, else null. */
+    static String gapNote(RouteResponse r, LatLng dest) {
+        if (r.geometry().isEmpty()) return null;
+        double[] end = r.geometry().get(r.geometry().size() - 1);
+        double gap = GeoUtils.haversineM(end[0], end[1], dest.lat(), dest.lng());
+        if (gap < NOTE_GAP_M) return null;
+        long rounded = Math.max(10, Math.round(gap / 10.0) * 10);
+        return "Brak trasy bez barier do samego celu — ostatnie " + rounded + " m może wymagać pomocy";
     }
 
     static boolean retryable(OrsException e) {

@@ -345,7 +345,8 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
 **Логика (продуктовое правило: по умолчанию — обычный пешеходный маршрут, недоступные участки красным, доступная альтернатива рядом):**
 1. **Основной маршрут** — `POST /v2/directions/foot-walking/geojson` (без restrictions).
 2. По `extras` основного маршрута строятся `barriers` — диапазоны индексов его `geometry`, непроходимые для профиля.
-3. Если `barriers` не пуст — дополнительно считается **альтернатива** `POST /v2/directions/wheelchair/geojson` с restrictions; если ORS не нашёл маршрут (коды 2004/2009/2010/2099) — один повтор **без** `profile_params.restrictions` → альтернатива с `"relaxed": true, "accessible": false`. Если и это не удалось — `"alternative": null`.
+3. Если `barriers` не пуст — дополнительно считается **альтернатива** `POST /v2/directions/wheelchair/geojson` с restrictions; у альтернативы тоже вычисляются собственные `barriers`. Если ORS не нашёл маршрут (коды 2004/2009/2010/2099) или альтернатива всё ещё с барьерами — пробуются смещённые точки назначения (`RouteService.DEST_OFFSETS_M`, 40–85 м вокруг цели; первая без барьеров побеждает) и в альтернативу добавляется `"note": "Brak trasy bez barier do samego celu — ostatnie N m może wymagać pomocy"` (если конец дальше 15 м от цели). Иначе — один повтор **без** `profile_params.restrictions` → альтернатива с `"relaxed": true, "accessible": false` и `note`. Если и это не удалось — `"alternative": null`, а у основного маршрута `note` с объяснением. Пример: Stara Synagoga (50.0514,19.9485) — точная цель привязывается к изолированному куску графа wheelchair (ORS 2009 даже без restrictions), смещение на 40 м к северу даёт маршрут.
+   Клиент показывает барьеры, альтернативу и `note` только при включённом чипе «Pasujące do mnie».
 4. Если не удался основной маршрут (или нет ключа) — прямая линия с `"fallback": true` и `fallbackReason`.
 
 Тело запроса в ORS (оба профиля):

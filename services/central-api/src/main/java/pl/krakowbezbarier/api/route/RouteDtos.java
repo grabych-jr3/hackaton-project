@@ -38,20 +38,35 @@ public final class RouteDtos {
      * relaxed = wheelchair restrictions were dropped to find a route;
      * fallbackReason = Polish explanation when fallback=true, else null.
      * accessible = barriers empty and route data available (false on fallback).
-     * alternative = wheelchair route when the primary has barriers, else null.
+     * alternative = wheelchair route when the primary has barriers, else null (its own barriers are reported too).
+     * note = Polish remark, e.g. "Brak trasy bez barier do samego celu — ostatnie N m może wymagać pomocy".
      */
     public record RouteResponse(String profile, double distanceM, double durationS, List<double[]> geometry,
                                 List<Segment> segments, List<Integer> order, String source, boolean fallback,
                                 boolean relaxed, String fallbackReason, List<Barrier> barriers, boolean accessible,
-                                RouteResponse alternative) {
+                                RouteResponse alternative, String note) {
+        public RouteResponse(String profile, double distanceM, double durationS, List<double[]> geometry,
+                             List<Segment> segments, List<Integer> order, String source, boolean fallback,
+                             boolean relaxed, String fallbackReason, List<Barrier> barriers, boolean accessible,
+                             RouteResponse alternative) {
+            this(profile, distanceM, durationS, geometry, segments, order, source, fallback, relaxed, fallbackReason,
+                    barriers, accessible, alternative, null);
+        }
+
         public RouteResponse withBarriers(List<Barrier> b, boolean acc) {
             return new RouteResponse(profile, distanceM, durationS, geometry, segments, order, source, fallback,
-                    relaxed, fallbackReason, b, acc, alternative);
+                    relaxed, fallbackReason, b, acc, alternative, note);
         }
 
         public RouteResponse withAlternative(RouteResponse alt) {
             return new RouteResponse(profile, distanceM, durationS, geometry, segments, order, source, fallback,
-                    relaxed, fallbackReason, barriers, accessible, alt);
+                    relaxed, fallbackReason, barriers, accessible, alt, note);
+        }
+
+        /** Polish note shown with the route (e.g. the accessible route stops short of the destination). */
+        public RouteResponse withNote(String n) {
+            return new RouteResponse(profile, distanceM, durationS, geometry, segments, order, source, fallback,
+                    relaxed, fallbackReason, barriers, accessible, alternative, n);
         }
     }
 }

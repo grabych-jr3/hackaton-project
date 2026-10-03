@@ -19,7 +19,12 @@ class RoutePanel extends StatelessWidget {
     this.onClearManualStart,
     this.showAlternative,
     this.onToggleAlternative,
+    this.showBarriers = false,
   });
+
+  /// false ('Pasujące do mnie' off) = plain walking route: no barriers,
+  /// no alternative toggle, no accessibility notes.
+  final bool showBarriers;
 
   /// The planned (walking) route; its [PlannedRoute.alternative] may be shown.
   final PlannedRoute route;
@@ -58,6 +63,7 @@ class RoutePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (!showBarriers) return _panel(context, false, null, plain: true);
     if (route.alternative != null &&
         (showAlternative == null || onToggleAlternative == null)) {
       return Consumer(builder: (context, ref, _) {
@@ -73,8 +79,10 @@ class RoutePanel extends StatelessWidget {
     return _panel(context, showAlternative ?? false, onToggleAlternative);
   }
 
-  Widget _panel(BuildContext context, bool showAlt, VoidCallback? onToggle) {
+  Widget _panel(BuildContext context, bool showAlt, VoidCallback? onToggle,
+      {bool plain = false}) {
     final text = Theme.of(context).textTheme;
+    final route = plain ? this.route.plain() : this.route;
     final alt = route.alternative;
     final shown = showAlt && alt != null ? alt : route;
 
@@ -174,8 +182,19 @@ class RoutePanel extends StatelessWidget {
                 Text(shown.fallbackReason!,
                     style: text.bodySmall?.copyWith(color: AppColors.warn)),
               ],
-              const SizedBox(height: 6),
-              _AccessNote(route: shown),
+              if (!plain) ...[
+                const SizedBox(height: 6),
+                _AccessNote(route: shown),
+              ],
+              if (shown.note != null) ...[
+                const SizedBox(height: 6),
+                Semantics(
+                  liveRegion: true,
+                  child: Text(shown.note!,
+                      style: text.bodySmall?.copyWith(
+                          color: AppColors.warn, fontWeight: FontWeight.w700)),
+                ),
+              ],
               if (alt != null && onToggle != null) ...[
                 const SizedBox(height: 6),
                 SizedBox(
@@ -338,15 +357,35 @@ class RouteCollapsedBar extends StatelessWidget {
     required this.route,
     required this.onExpand,
     required this.onClear,
+    this.showBarriers = false,
+    this.showAlternative = false,
+    this.onToggleAlternative,
   });
 
+  /// The planned (walking) route; its alternative may be the shown one.
   final PlannedRoute route;
   final VoidCallback onExpand;
   final VoidCallback onClear;
 
+  /// 'Pasujące do mnie' on: barrier count + alternative toggle are shown.
+  final bool showBarriers;
+  final bool showAlternative;
+  final VoidCallback? onToggleAlternative;
+
+  /// Collapsed-bar toggle label, e.g. "Trasa dostępna: +300 m".
+  static String alternativeLabel(PlannedRoute walking, PlannedRoute alt) =>
+      'Trasa dostępna: ${RoutePanel._delta(alt.distanceM - walking.distanceM, formatDistance)}';
+
+  static const walkingLabel = 'Trasa piesza';
+
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final alt = showBarriers ? route.alternative : null;
+    final showAlt = showAlternative && alt != null;
+    final shown = showAlt ? alt : route;
+    final barrierCount =
+        showBarriers ? groupBarriers(shown).length : 0;
     return Material(
       color: AppColors.surfaceGlass,
       shape: RoundedRectangleBorder(
@@ -355,29 +394,52 @@ class RouteCollapsedBar extends StatelessWidget {
       ),
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(Icons.route_rounded, color: AppColors.primary),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                '${route.destination.name} · ${formatDistance(route.distanceM)}'
-                '${route.isDemo ? ' · przykładowa' : ''}',
-                style: text.bodyMedium?.copyWith(
-                    color: AppColors.text, fontWeight: FontWeight.w700),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+            Row(
+              children: [
+                Icon(
+                    showAlt
+                        ? Icons.accessible_forward_rounded
+                        : Icons.route_rounded,
+                    color: AppColors.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '${route.destination.name} · ${formatDistance(shown.distanceM)}'
+                    '${barrierCount > 0 ? ' · bariery: $barrierCount' : ''}'
+                    '${shown.isDemo ? ' · przykładowa' : ''}',
+                    style: text.bodyMedium?.copyWith(
+                        color: AppColors.text, fontWeight: FontWeight.w700),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                TextButton(
+                  onPressed: onExpand,
+                  child: const Text('Pokaż kroki'),
+                ),
+                IconButton(
+                  onPressed: onClear,
+                  tooltip: 'Usuń trasę',
+                  icon: const Icon(Icons.close_rounded,
+                      color: AppColors.textMuted),
+                ),
+              ],
+            ),
+            if (alt != null && onToggleAlternative != null)
+              TextButton.icon(
+                onPressed: onToggleAlternative,
+                icon: Icon(
+                    showAlt
+                        ? Icons.directions_walk_rounded
+                        : Icons.accessible_forward_rounded,
+                    size: 18),
+                label: Text(
+                    showAlt ? walkingLabel : alternativeLabel(route, alt)),
               ),
-            ),
-            TextButton(
-              onPressed: onExpand,
-              child: const Text('Pokaż kroki'),
-            ),
-            IconButton(
-              onPressed: onClear,
-              tooltip: 'Usuń trasę',
-              icon: const Icon(Icons.close_rounded, color: AppColors.textMuted),
-            ),
           ],
         ),
       ),
