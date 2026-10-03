@@ -106,7 +106,7 @@ public class CatchService {
         producer.send(event).whenComplete((r, ex) -> {
             if (ex != null) {
                 log.warn("Kafka publish failed for catch {}: {}", id, ex.getMessage());
-                jdbc.update("UPDATE catch_record SET status = 'FAILED', reason = 'broker unavailable', analyzed_at = now() "
+                jdbc.update("UPDATE catch_record SET status = 'FAILED', reason = 'Serwer chwilowo niedostępny — spróbuj ponownie', analyzed_at = now() "
                         + "WHERE id = ? AND status = 'PENDING'", id);
             }
         });
