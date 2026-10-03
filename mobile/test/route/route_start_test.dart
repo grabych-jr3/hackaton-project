@@ -125,12 +125,27 @@ void main() {
     expect(plain.fallbackReason, isNull);
   });
 
-  test('ORS body has radiuses; on 2009 retries without restrictions',
-      () async {
+  test(
+      'walking route with steps → wheelchair alternative; on 2009 retries '
+      'without restrictions', () async {
     final fixture =
         File('test/route/fixtures/ors_rynek_wawel.json').readAsStringSync();
+    final walking = jsonDecode(fixture) as Map<String, dynamic>;
+    (walking['features'] as List).first['properties']['extras'] = {
+      'waytypes': {
+        'values': [
+          [0, 2, 3],
+          [2, 4, 7],
+        ],
+      },
+    };
+    final walkingBodies = <Map<String, dynamic>>[];
     final bodies = <Map<String, dynamic>>[];
     final client = MockClient((req) async {
+      if (req.url.path.contains('foot-walking')) {
+        walkingBodies.add(jsonDecode(req.body) as Map<String, dynamic>);
+        return http.Response.bytes(utf8.encode(jsonEncode(walking)), 200);
+      }
       bodies.add(jsonDecode(req.body) as Map<String, dynamic>);
       if (bodies.length == 1) {
         return http.Response(
@@ -150,7 +165,13 @@ void main() {
     expect(bodies.first['radiuses'], [-1, -1]);
     expect(bodies.first['options'], isNotNull);
     expect(bodies.last.containsKey('options'), isFalse);
-    expect(route.relaxed, isTrue);
+    expect(walkingBodies.single['extra_info'],
+        ['steepness', 'surface', 'waytype']);
+    expect(route.profile, 'foot-walking');
+    expect(route.accessible, isFalse);
+    expect(route.barriers.single.type, 'steps');
+    expect(route.alternative!.relaxed, isTrue);
+    expect(route.alternative!.isWheelchair, isTrue);
     expect(route.isDemo, isFalse);
   });
 
