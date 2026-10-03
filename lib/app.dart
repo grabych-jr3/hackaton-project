@@ -1,0 +1,47 @@
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+
+import 'core/theme/app_theme.dart';
+import 'core/widgets/phone_frame.dart';
+import 'features/catch/catch_screen.dart';
+import 'features/collection/collection_screen.dart';
+import 'features/map/map_screen.dart';
+import 'features/profile/profile_screen.dart';
+import 'features/rewards/rewards_screen.dart';
+import 'features/shell/home_shell.dart';
+
+final _router = GoRouter(
+  initialLocation: '/map',
+  routes: [
+    StatefulShellRoute.indexedStack(
+      builder: (context, state, shell) => HomeShell(navigationShell: shell),
+      branches: [
+        _branch('/map', const MapScreen()),
+        _branch('/rewards', const RewardsScreen()),
+        _branch('/catch', const CatchScreen()),
+        _branch('/collection', const CollectionScreen()),
+        _branch('/profile', const ProfileScreen()),
+      ],
+    ),
+  ],
+);
+
+StatefulShellBranch _branch(String path, Widget screen) => StatefulShellBranch(
+      routes: [GoRoute(path: path, builder: (context, state) => screen)],
+    );
+
+class KrakowBezBarierApp extends StatelessWidget {
+  const KrakowBezBarierApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp.router(
+      title: 'Kraków bez barier',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.light(),
+      themeMode: ThemeMode.light,
+      routerConfig: _router,
+      builder: (context, child) => PhoneFrame(child: child!),
+    );
+  }
+}
