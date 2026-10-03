@@ -64,7 +64,7 @@ void main() {
   testWidgets('suggestions work in list mode too', (tester) async {
     withProfile(NeedsProfile.wheelchair);
     await pumpApp(tester);
-    await tester.tap(find.text('Lista'));
+    await tester.tap(find.byTooltip('Lista miejsc'));
     await tester.pumpAndSettle();
 
     await tester.enterText(find.byType(TextField), 'kladka');

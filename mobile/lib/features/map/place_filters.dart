@@ -1,10 +1,12 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../../data/models/accessibility_fact.dart';
 import '../../data/models/place.dart';
 import '../../data/repositories/places_repository.dart';
 import '../../domain/profile_match.dart';
 import '../place/place_providers.dart';
+import '../route/route_start.dart';
 
 /// Search + filter state shared by the map and its text list.
 class PlaceFilters {
@@ -85,6 +87,7 @@ final searchSuggestionsProvider = Provider<List<Place>>((ref) {
 
 final filteredPlacesProvider = Provider<AsyncValue<List<Place>>>((ref) {
   final filters = ref.watch(placeFiltersProvider);
+  final origin = ref.watch(distanceOriginProvider);
 
   return ref.watch(placesProvider).whenData((places) => places.where((p) {
         if (!placeMatchesQuery(p, filters.query)) return false;
@@ -95,5 +98,37 @@ final filteredPlacesProvider = Provider<AsyncValue<List<Place>>>((ref) {
           return false;
         }
         return true;
-      }).toList());
+      }).toList()
+        ..sort((a, b) => _dist(origin.point, a).compareTo(_dist(origin.point, b))));
 });
+
+/// Point that list distances are measured from: the user's usable GPS fix,
+/// otherwise Rynek Główny.
+class DistanceOrigin {
+  const DistanceOrigin(this.point, {required this.fromGps});
+  final LatLng point;
+  final bool fromGps;
+
+  /// List header.
+  String get label => fromGps ? 'Najbliżej Ciebie' : 'Odległość od Rynku Głównego';
+}
+
+final distanceOriginProvider = Provider<DistanceOrigin>((ref) {
+  final gps = ref.watch(userLocationProvider);
+  if (gps != null && gps.isUsable) {
+    return DistanceOrigin(gps.point, fromGps: true);
+  }
+  return const DistanceOrigin(rynekGlowny, fromGps: false);
+});
+
+const _distance = Distance();
+
+double _dist(LatLng from, Place p) => _distance(from, LatLng(p.lat, p.lng));
+
+/// Meters from [from] to [place].
+double distanceToPlace(LatLng from, Place place) => _dist(from, place);
+
+/// "350 m" / "1,2 km" (Polish decimal comma).
+String formatDistance(double m) => m >= 1000
+    ? '${(m / 1000).toStringAsFixed(1).replaceAll('.', ',')} km'
+    : '${m.round()} m';

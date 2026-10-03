@@ -210,8 +210,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       const SizedBox(width: 8),
                       _GlassMapButton(
                         tooltip: 'Pokaż mapę',
-                        icon: Icons.map_rounded,
-                        label: 'Mapa',
+                        icon: Icons.map_outlined,
                         onPressed: _toggleList,
                       ),
                     ],
@@ -279,14 +278,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           }
                         }),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 12),
                       _GlassMapButton(
-                        tooltip: 'Pokaż listę miejsc',
-                        icon: Icons.view_list_rounded,
-                        label: 'Lista',
+                        tooltip: 'Lista miejsc',
+                        icon: Icons.castle_outlined,
                         onPressed: _toggleList,
                       ),
-                      const SizedBox(height: 40),
+                      const SizedBox(height: 12),
                       _GlassMapButton(
                         tooltip: 'Moja lokalizacja',
                         icon: Icons.my_location_rounded,
@@ -721,11 +719,10 @@ class _GlassMapButton extends StatelessWidget {
     required this.tooltip,
     required this.onPressed,
     this.isLoading = false,
-    this.label,
   });
 
-  /// Optional text shown next to the icon (e.g. "Lista").
-  final String? label;
+  static const double size = 52;
+  static const double radius = 16;
 
   final IconData icon;
   final String tooltip;
@@ -734,50 +731,40 @@ class _GlassMapButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-        child: Material(
-          color: AppColors.surfaceGlass,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: const BorderSide(color: AppColors.border, width: 1.2),
-          ),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(16),
-            onTap: onPressed,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
-              child: Tooltip(
-                message: tooltip,
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: label == null ? 0 : 12),
+    return Semantics(
+      button: true,
+      label: tooltip,
+      excludeSemantics: true,
+      onTap: onPressed,
+      child: SizedBox.square(
+        dimension: size,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(radius),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+            child: Material(
+              color: AppColors.surfaceGlass,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(radius),
+                side: const BorderSide(color: AppColors.border, width: 1.2),
+              ),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(radius),
+                onTap: onPressed,
+                child: Tooltip(
+                  message: tooltip,
                   child: Center(
-                  widthFactor: 1,
-                  child: isLoading
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppColors.primary,
-                          ),
-                        )
-                      : Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(icon, color: AppColors.primary, size: 22),
-                            if (label != null) ...[
-                              const SizedBox(width: 6),
-                              Text(label!,
-                                  style: const TextStyle(
-                                      color: AppColors.primary,
-                                      fontWeight: FontWeight.w700)),
-                            ],
-                          ],
-                        ),
-                ),
+                    child: isLoading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppColors.primary,
+                            ),
+                          )
+                        : Icon(icon, color: AppColors.primary, size: 24),
+                  ),
                 ),
               ),
             ),
