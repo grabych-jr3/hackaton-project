@@ -60,7 +60,9 @@ class CollectionScreen extends ConsumerWidget {
                 crossAxisSpacing: 12,
                 childAspectRatio: 0.6,
                 children: [
-                  for (final s in c.species) _SpeciesTile(s, g.caught[s.id] ?? 0),
+                  for (final s in c.species)
+                    _SpeciesTile(s, g.caught[s.id] ?? 0,
+                        discovered: g.caught.containsKey(s.id)),
                 ],
               ),
               const SizedBox(height: 24),
@@ -112,15 +114,19 @@ class _PointsBadge extends StatelessWidget {
 }
 
 class _SpeciesTile extends StatelessWidget {
-  const _SpeciesTile(this.species, this.count);
+  const _SpeciesTile(this.species, this.count, {required this.discovered});
 
   final Species species;
   final int count;
 
+  /// Caught at least once — stays unlocked after selling every piece.
+  final bool discovered;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final caught = count > 0;
+    final caught = discovered;
+    final canSell = count > 0;
     final name = caught ? species.name : '???';
     final rarityColor = _rarityColor(species.rarity);
 
@@ -151,7 +157,7 @@ class _SpeciesTile extends StatelessWidget {
         ),
         if (caught)
           Text(
-            '×$count',
+            canSell ? '×$count' : 'sprzedane',
             style: theme.textTheme.labelMedium?.copyWith(
               color: AppColors.primary,
               fontWeight: FontWeight.w800,
@@ -196,7 +202,7 @@ class _SpeciesTile extends StatelessWidget {
                 ),
               ),
             ),
-            if (caught)
+            if (canSell)
               Padding(
                 padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
                 child: Semantics(

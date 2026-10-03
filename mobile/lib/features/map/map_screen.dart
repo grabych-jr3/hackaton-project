@@ -84,6 +84,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     ));
   }
 
+  void _toggleList() => setState(() {
+        _showList = !_showList;
+        _selected = null;
+      });
+
   void _select(Place place) {
     setState(() => _selected = place);
     _mapController.move(LatLng(place.lat, place.lng), 16);
@@ -94,55 +99,26 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     final route = ref.watch(routeProvider);
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: AppColors.mint100,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppColors.mint300),
-              ),
-              child: const Icon(Icons.explore_rounded, color: AppColors.primary, size: 20),
-            ),
-            const SizedBox(width: 10),
-            const Flexible(
-              child: Text(
-                'Kraków bez barier',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton.icon(
-            style: TextButton.styleFrom(
-              foregroundColor: AppColors.primary,
-              backgroundColor: AppColors.surfaceElevated,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: const BorderSide(color: AppColors.border),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            ),
-            onPressed: () => setState(() {
-              _showList = !_showList;
-              _selected = null;
-            }),
-            icon: Icon(_showList ? Icons.map_rounded : Icons.view_list_rounded, size: 18),
-            label: Text(_showList ? 'Mapa' : 'Lista'),
-          ),
-          const SizedBox(width: 16),
-        ],
-      ),
-      body: _showList
+      body: SafeArea(
+        bottom: false,
+        child: _showList
           ? Column(
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                  child: _FloatingSearchIsland(onSubmitted: null),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: _FloatingSearchIsland(onSubmitted: null)),
+                      const SizedBox(width: 8),
+                      _GlassMapButton(
+                        tooltip: 'Pokaż mapę',
+                        icon: Icons.map_rounded,
+                        label: 'Mapa',
+                        onPressed: _toggleList,
+                      ),
+                    ],
+                  ),
                 ),
                 const OfflineBanner(),
                 const Expanded(child: PlacesList()),
@@ -183,6 +159,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   top: 150,
                   right: 16,
                   child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       _GlassMapButton(
                         tooltip: _style == _MapStyle.dark
@@ -206,6 +183,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         }),
                       ),
                       const SizedBox(height: 10),
+                      _GlassMapButton(
+                        tooltip: 'Pokaż listę miejsc',
+                        icon: Icons.view_list_rounded,
+                        label: 'Lista',
+                        onPressed: _toggleList,
+                      ),
+                      const SizedBox(height: 40),
                       _GlassMapButton(
                         tooltip: 'Moja lokalizacja',
                         icon: Icons.my_location_rounded,
@@ -257,6 +241,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   ),
               ],
             ),
+      ),
     );
   }
 }
@@ -635,7 +620,11 @@ class _GlassMapButton extends StatelessWidget {
     required this.tooltip,
     required this.onPressed,
     this.isLoading = false,
+    this.label,
   });
+
+  /// Optional text shown next to the icon (e.g. "Lista").
+  final String? label;
 
   final IconData icon;
   final String tooltip;
@@ -657,12 +646,14 @@ class _GlassMapButton extends StatelessWidget {
           child: InkWell(
             borderRadius: BorderRadius.circular(16),
             onTap: onPressed,
-            child: SizedBox(
-              width: 44,
-              height: 44,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
               child: Tooltip(
                 message: tooltip,
-                child: Center(
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: label == null ? 0 : 12),
+                  child: Center(
+                  widthFactor: 1,
                   child: isLoading
                       ? const SizedBox(
                           width: 18,
@@ -672,7 +663,20 @@ class _GlassMapButton extends StatelessWidget {
                             color: AppColors.primary,
                           ),
                         )
-                      : Icon(icon, color: AppColors.primary, size: 22),
+                      : Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(icon, color: AppColors.primary, size: 22),
+                            if (label != null) ...[
+                              const SizedBox(width: 6),
+                              Text(label!,
+                                  style: const TextStyle(
+                                      color: AppColors.primary,
+                                      fontWeight: FontWeight.w700)),
+                            ],
+                          ],
+                        ),
+                ),
                 ),
               ),
             ),

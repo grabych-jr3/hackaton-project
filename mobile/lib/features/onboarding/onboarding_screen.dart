@@ -40,7 +40,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
               style: text.bodyLarge?.copyWith(color: AppColors.textMuted),
             ),
             const SizedBox(height: 24),
-            for (final preset in ProfilePreset.values) ...[
+            for (final preset in selectablePresets) ...[
               _PresetCard(
                 preset: preset,
                 selected: preset == _selected,

@@ -318,11 +318,8 @@ class GameRules {
     final owned = state.caught[speciesId] ?? 0;
     if (count > owned) throw const SellException(SellFailure.notEnoughCreatures);
     final caught = Map<String, int>.of(state.caught);
-    if (owned == count) {
-      caught.remove(speciesId);
-    } else {
-      caught[speciesId] = owned - count;
-    }
+    // Keep the key at 0: a species once caught stays discovered in Kolekcja.
+    caught[speciesId] = owned - count;
     final earned = species.sellValue * count;
     return SellResult(state.copyWith(points: state.points + earned, caught: caught), earned);
   }

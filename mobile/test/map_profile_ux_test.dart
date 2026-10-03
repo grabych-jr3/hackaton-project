@@ -111,13 +111,15 @@ void main() {
     expect(find.text('Toaleta dostępna'), findsNothing);
   });
 
-  testWidgets('profile screen has no width slider', (tester) async {
+  testWidgets('profile screen has no threshold sliders', (tester) async {
     withProfile(NeedsProfile.wheelchair.copyWith(preset: ProfilePreset.custom));
     await pumpApp(tester);
     await tester.tap(find.text('Profil').last);
     await tester.pumpAndSettle();
     expect(find.textContaining('szerokość'), findsNothing);
-    expect(find.text('Maks. wysokość krawężnika'), findsOneWidget);
+    expect(find.byType(Slider), findsNothing);
+    expect(find.text('Własne'), findsNothing);
+    expect(find.text('Inwalidzki'), findsOneWidget);
   });
 
   test('width is a constant 75 cm; old stored values are ignored', () {

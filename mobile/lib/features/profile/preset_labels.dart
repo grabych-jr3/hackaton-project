@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../../data/models/needs_profile.dart';
 
+/// Thresholds are fixed per wheelchair type (averaged); users only pick the type.
+const selectablePresets = [ProfilePreset.wheelchair, ProfilePreset.stroller];
+
 extension PresetLabels on ProfilePreset {
   String get label => switch (this) {
         ProfilePreset.wheelchair => 'Wózek inwalidzki',

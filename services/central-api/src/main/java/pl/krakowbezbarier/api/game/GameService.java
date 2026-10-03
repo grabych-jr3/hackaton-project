@@ -129,11 +129,8 @@ public class GameService {
         if (count > have) {
             throw new ApiException(HttpStatus.CONFLICT, "NOT_ENOUGH_CREATURES", "You own only " + have + " of " + species.id());
         }
-        if (count == have) {
-            jdbc.update("DELETE FROM user_species WHERE user_id = ? AND species_id = ?", userId, species.id());
-        } else {
-            jdbc.update("UPDATE user_species SET count = count - ? WHERE user_id = ? AND species_id = ?", count, userId, species.id());
-        }
+        // Keep the row at 0: a species once caught stays discovered in the collection.
+        jdbc.update("UPDATE user_species SET count = count - ? WHERE user_id = ? AND species_id = ?", count, userId, species.id());
         int earned = GameRules.sellEarnings(species.rarity(), count);
         points.award(userId, earned, "sell", UUID.randomUUID().toString());
         return new SellResponse(earned, state(userId));

@@ -71,7 +71,8 @@ void main() {
     final all = rules.sell(r.state, 'smok', 1);
     expect(all.earned, 150);
     expect(all.state.points, 205);
-    expect(all.state.caught.containsKey('smok'), isFalse);
+    // Sold out but still discovered (stays unlocked in Kolekcja).
+    expect(all.state.caught['smok'], 0);
   });
 
   test('sell validation', () {
