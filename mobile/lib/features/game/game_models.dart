@@ -277,6 +277,113 @@ class CatchResult {
   final int points;
 }
 
+/// Status of a photo catch analysed by the vision service.
+enum CatchStatus {
+  pending,
+  ok,
+  rejected,
+  failed;
+
+  static CatchStatus fromJson(String? v) => switch (v) {
+        'PENDING' => pending,
+        'OK' => ok,
+        'REJECTED' => rejected,
+        _ => failed,
+      };
+}
+
+/// AI estimate of barriers in a catch photo (unverified).
+class CatchAiResult {
+  const CatchAiResult({
+    this.steps,
+    this.kerbRange,
+    this.widthRange,
+    this.ramp,
+    this.handrail,
+    this.obstacles,
+    this.difficulty,
+    this.confidence,
+  });
+
+  final int? steps;
+  final String? kerbRange;
+  final String? widthRange;
+  final bool? ramp;
+  final bool? handrail;
+  final bool? obstacles;
+  final String? difficulty;
+  final double? confidence;
+
+  factory CatchAiResult.fromJson(Map<String, dynamic> j) => CatchAiResult(
+        steps: (j['steps'] as num?)?.toInt(),
+        kerbRange: j['kerbRange']?.toString(),
+        widthRange: j['widthRange']?.toString(),
+        ramp: j['ramp'] as bool?,
+        handrail: j['handrail'] as bool?,
+        obstacles: j['obstacles'] is bool
+            ? j['obstacles'] as bool
+            : (j['obstacles'] is List ? (j['obstacles'] as List).isNotEmpty : null),
+        difficulty: j['difficulty']?.toString(),
+        confidence: (j['confidence'] as num?)?.toDouble(),
+      );
+
+  /// Human-readable Polish barrier lines.
+  List<String> get lines => [
+        if (steps != null) steps == 0 ? 'Brak schodów' : 'Schody: $steps',
+        if (kerbRange != null) 'Krawężnik: $kerbRange',
+        if (widthRange != null) 'Szerokość przejścia: $widthRange',
+        if (ramp != null) ramp! ? 'Podjazd / rampa: jest' : 'Brak podjazdu / rampy',
+        if (handrail != null) handrail! ? 'Poręcz: jest' : 'Brak poręczy',
+        if (obstacles == true) 'Przeszkody na drodze',
+        if (difficulty != null) 'Trudność: $difficulty',
+        if (confidence != null) 'Pewność AI: ${(confidence! * 100).round()}%',
+      ];
+}
+
+/// `GET /catches/{id}` (and the `202` of `POST /catches`).
+class CatchPhotoResponse {
+  const CatchPhotoResponse({
+    required this.catchId,
+    required this.status,
+    this.reason,
+    this.result,
+    this.species,
+    this.points = 0,
+    this.state,
+    this.timedOut = false,
+  });
+
+  final String catchId;
+  final CatchStatus status;
+  final String? reason;
+  final CatchAiResult? result;
+  final Species? species;
+
+  /// Sell value of the creature — catching itself awards no points.
+  final int points;
+
+  /// Server game state after the catch (collection updated server-side).
+  final GameState? state;
+
+  /// true when polling gave up while still PENDING.
+  final bool timedOut;
+
+  factory CatchPhotoResponse.fromJson(Map<String, dynamic> j) {
+    final species = j['species'] as Map<String, dynamic>?;
+    final result = j['result'] as Map<String, dynamic>?;
+    final state = j['state'] as Map<String, dynamic>?;
+    return CatchPhotoResponse(
+      catchId: j['catchId'].toString(),
+      status: CatchStatus.fromJson(j['status'] as String?),
+      reason: j['reason'] as String?,
+      result: result == null ? null : CatchAiResult.fromJson(result),
+      species: species == null ? null : Species.fromJson(species),
+      points: (j['points'] as num?)?.toInt() ?? 0,
+      state: state == null ? null : GameState.fromJson(state),
+    );
+  }
+}
+
 enum SellFailure { invalidCount, notEnoughCreatures, unknownSpecies }
 
 class SellException implements Exception {

@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'core/theme/app_theme.dart';
 import 'core/widgets/phone_frame.dart';
 import 'data/repositories/profile_repository.dart';
+import 'features/catch/ar_catch_screen.dart';
 import 'features/catch/catch_screen.dart';
 import 'features/collection/collection_screen.dart';
 import 'features/map/map_screen.dart';
@@ -26,6 +27,11 @@ GoRouter _buildRouter() => GoRouter(
         _branch('/collection', const CollectionScreen()),
         _branch('/profile', const ProfileScreen()),
       ],
+    ),
+    GoRoute(
+      path: '/catch/camera',
+      builder: (context, state) =>
+          ArCatchScreen(placeId: state.uri.queryParameters['placeId']),
     ),
     GoRoute(
       path: '/place/:id',
