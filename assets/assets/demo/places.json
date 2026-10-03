@@ -1,0 +1,135 @@
+{
+  "dataset": "DANE PRZYKŁADOWE — demonstracyjne fakty dostępności, nie są potwierdzonym stanem obiektów",
+  "isDemo": true,
+  "places": [
+    {
+      "id": "wawel",
+      "name": "Zamek Królewski na Wawelu",
+      "category": "attraction",
+      "lat": 50.0541, "lng": 19.9354,
+      "address": "Wawel 5",
+      "facts": [
+        {"feature": "steps", "value": 0, "source": "owner", "sourceRef": "demo:wawel.krakow.pl", "fetchedAt": "2026-09-20", "confirmations": 4},
+        {"feature": "incline", "value": 8, "source": "estimate", "sourceRef": "demo:model terenu NMT", "fetchedAt": "2026-09-01"},
+        {"feature": "doorWidth", "value": 120, "source": "osm", "sourceRef": "demo:osm", "fetchedAt": "2026-09-28"},
+        {"feature": "toilet", "value": true, "source": "osm", "sourceRef": "demo:osm", "fetchedAt": "2026-09-28", "confirmations": 2},
+        {"feature": "bench", "value": true, "source": "user", "fetchedAt": "2026-09-30", "confirmations": 3}
+      ]
+    },
+    {
+      "id": "sukiennice",
+      "name": "Sukiennice",
+      "category": "museum",
+      "lat": 50.0617, "lng": 19.9373,
+      "address": "Rynek Główny 1/3",
+      "facts": [
+        {"feature": "steps", "value": 0, "source": "osm", "sourceRef": "demo:osm", "fetchedAt": "2026-08-15"},
+        {"feature": "steps", "value": 3, "source": "user", "fetchedAt": "2026-10-02", "confirmations": 1},
+        {"feature": "elevator", "value": true, "source": "owner", "sourceRef": "demo:mnk.pl", "fetchedAt": "2026-09-10"},
+        {"feature": "toilet", "value": true, "source": "owner", "sourceRef": "demo:mnk.pl", "fetchedAt": "2026-09-10"}
+      ]
+    },
+    {
+      "id": "mariacki",
+      "name": "Bazylika Mariacka",
+      "category": "church",
+      "lat": 50.0616, "lng": 19.9395,
+      "address": "plac Mariacki 5",
+      "facts": [
+        {"feature": "steps", "value": 2, "source": "osm", "sourceRef": "demo:osm", "fetchedAt": "2026-09-05", "confirmations": 2},
+        {"feature": "ramp", "value": false, "source": "user", "fetchedAt": "2026-09-25"},
+        {"feature": "doorWidth", "value": 90, "source": "osm", "sourceRef": "demo:osm", "fetchedAt": "2026-09-05"}
+      ]
+    },
+    {
+      "id": "mnk-gmach",
+      "name": "Muzeum Narodowe — Gmach Główny",
+      "category": "museum",
+      "lat": 50.0603, "lng": 19.9238,
+      "address": "al. 3 Maja 1",
+      "facts": [
+        {"feature": "steps", "value": 0, "source": "owner", "sourceRef": "demo:mnk.pl", "fetchedAt": "2026-07-01"},
+        {"feature": "ramp", "value": true, "source": "owner", "sourceRef": "demo:mnk.pl", "fetchedAt": "2026-07-01"},
+        {"feature": "elevator", "value": true, "source": "owner", "sourceRef": "demo:mnk.pl", "fetchedAt": "2026-07-01"},
+        {"feature": "doorWidth", "value": 140, "source": "osm", "sourceRef": "demo:osm", "fetchedAt": "2026-09-28"},
+        {"feature": "toilet", "value": true, "source": "owner", "sourceRef": "demo:mnk.pl", "fetchedAt": "2026-07-01"},
+        {"feature": "disabledParking", "value": true, "source": "osm", "sourceRef": "demo:osm", "fetchedAt": "2026-09-28"}
+      ]
+    },
+    {
+      "id": "bulwary",
+      "name": "Bulwary Wiślane",
+      "category": "park",
+      "lat": 50.0505, "lng": 19.9378,
+      "facts": [
+        {"feature": "incline", "value": 9, "source": "osm", "sourceRef": "demo:osm", "fetchedAt": "2026-09-12"},
+        {"feature": "kerbHeight", "value": 2, "source": "osm", "sourceRef": "demo:osm (kerb=lowered)", "fetchedAt": "2026-09-12"},
+        {"feature": "bench", "value": true, "source": "osm", "sourceRef": "demo:osm", "fetchedAt": "2026-09-12", "confirmations": 2}
+      ]
+    },
+    {
+      "id": "stara-synagoga",
+      "name": "Stara Synagoga",
+      "category": "museum",
+      "lat": 50.0514, "lng": 19.9485,
+      "address": "ul. Szeroka 24",
+      "facts": [
+        {"feature": "doorWidth", "value": 75, "source": "user", "fetchedAt": "2026-09-29"},
+        {"feature": "steps", "value": 1, "source": "osm", "sourceRef": "demo:osm", "fetchedAt": "2026-08-30"}
+      ]
+    },
+    {
+      "id": "massolit",
+      "name": "Massolit Books & Café",
+      "category": "cafe",
+      "lat": 50.0626, "lng": 19.9255,
+      "address": "ul. Felicjanek 4",
+      "facts": [
+        {"feature": "steps", "value": 1, "source": "ai", "sourceRef": "demo:zdjęcie użytkownika", "fetchedAt": "2026-10-03"},
+        {"feature": "kerbHeight", "value": "3-7", "source": "ai", "sourceRef": "demo:zdjęcie użytkownika", "fetchedAt": "2026-10-03"}
+      ]
+    },
+    {
+      "id": "schindler",
+      "name": "Fabryka Emalia Oskara Schindlera",
+      "category": "museum",
+      "lat": 50.0475, "lng": 19.9617,
+      "address": "ul. Lipowa 4",
+      "facts": [
+        {"feature": "steps", "value": 0, "source": "owner", "sourceRef": "demo:muzeumkrakowa.pl", "fetchedAt": "2026-08-20"},
+        {"feature": "elevator", "value": true, "source": "owner", "sourceRef": "demo:muzeumkrakowa.pl", "fetchedAt": "2026-08-20"},
+        {"feature": "toilet", "value": true, "source": "osm", "sourceRef": "demo:osm", "fetchedAt": "2026-09-28", "confirmations": 2},
+        {"feature": "doorWidth", "value": 100, "source": "osm", "sourceRef": "demo:osm", "fetchedAt": "2026-09-28"}
+      ]
+    },
+    {
+      "id": "bernatka",
+      "name": "Kładka Ojca Bernatka",
+      "category": "bridge",
+      "lat": 50.0485, "lng": 19.9464,
+      "facts": [
+        {"feature": "incline", "value": 7, "source": "osm", "sourceRef": "demo:osm", "fetchedAt": "2026-09-15"},
+        {"feature": "steps", "value": 0, "source": "osm", "sourceRef": "demo:osm", "fetchedAt": "2026-09-15", "confirmations": 3}
+      ]
+    },
+    {
+      "id": "nowa-prowincja",
+      "name": "Nowa Prowincja",
+      "category": "cafe",
+      "lat": 50.0632, "lng": 19.9378,
+      "address": "ul. Bracka 3-5",
+      "facts": []
+    },
+    {
+      "id": "barbakan",
+      "name": "Barbakan",
+      "category": "attraction",
+      "lat": 50.0655, "lng": 19.9418,
+      "address": "ul. Basztowa",
+      "facts": [
+        {"feature": "steps", "value": 5, "source": "user", "fetchedAt": "2024-06-10", "confirmations": 1},
+        {"feature": "ramp", "value": false, "source": "osm", "sourceRef": "demo:osm", "fetchedAt": "2024-05-01"}
+      ]
+    }
+  ]
+}
