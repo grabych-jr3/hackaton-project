@@ -10,10 +10,26 @@ import 'route_service.dart';
 /// Bottom panel with the route summary and a text list of segments —
 /// the accessible alternative to the line drawn on the map.
 class RoutePanel extends StatelessWidget {
-  const RoutePanel({super.key, required this.route, required this.onClose});
+  const RoutePanel({
+    super.key,
+    required this.route,
+    required this.onClose,
+    this.onCycleStart,
+    this.onClearManualStart,
+  });
 
   final PlannedRoute route;
   final VoidCallback onClose;
+
+  /// Cycles start options (Rynek / GPS / chosen point) — keyboard-friendly
+  /// alternative to long-pressing the map.
+  final VoidCallback? onCycleStart;
+
+  /// Set when a manual start point exists; clears it.
+  final VoidCallback? onClearManualStart;
+
+  static const relaxedNote =
+      'Nie znaleziono trasy spełniającej wszystkie progi — pokazano najbliższą możliwą';
 
   @override
   Widget build(BuildContext context) {
@@ -63,6 +79,25 @@ class RoutePanel extends StatelessWidget {
                 'Start: ${route.startLabel} · ${formatDistance(route.distanceM)} · ${formatDuration(route.durationS)}',
                 style: text.bodyMedium?.copyWith(color: AppColors.text),
               ),
+              if (onCycleStart != null || onClearManualStart != null)
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    if (onCycleStart != null)
+                      TextButton.icon(
+                        onPressed: onCycleStart,
+                        icon: const Icon(Icons.flag_rounded, size: 18),
+                        label: Text('Start: ${route.startLabel}'),
+                        style: TextButton.styleFrom(
+                            padding: EdgeInsets.zero),
+                      ),
+                    if (onClearManualStart != null)
+                      TextButton(
+                        onPressed: onClearManualStart,
+                        child: const Text('Usuń wybrany start'),
+                      ),
+                  ],
+                ),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
@@ -78,6 +113,15 @@ class RoutePanel extends StatelessWidget {
                     ),
                 ],
               ),
+              if (route.relaxed) ...[
+                const SizedBox(height: 6),
+                Semantics(
+                  liveRegion: true,
+                  child: Text(relaxedNote,
+                      style: text.bodySmall?.copyWith(
+                          color: AppColors.warn, fontWeight: FontWeight.w700)),
+                ),
+              ],
               if (route.fallbackReason != null) ...[
                 const SizedBox(height: 6),
                 Text(route.fallbackReason!,

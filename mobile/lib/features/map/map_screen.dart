@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -18,6 +20,7 @@ import '../place/places_list.dart';
 import '../place/status_chip.dart';
 import '../route/route_panel.dart';
 import '../route/route_service.dart';
+import '../route/route_start.dart';
 import 'place_filters.dart';
 
 const _krakowCenter = LatLng(50.0590, 19.9390);
@@ -34,9 +37,99 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool _showList = false;
   Place? _selected;
   _MapStyle _style = _MapStyle.dark;
-  LatLng? _myLocation;
   bool _locating = false;
   bool _routeCollapsed = false;
+  StreamSubscription<Position>? _posSub;
+
+  @override
+  void dispose() {
+    _posSub?.cancel();
+    super.dispose();
+  }
+
+  /// High-accuracy settings per platform (desktop browsers may still
+  /// geolocate by Wi-Fi/IP — accuracy is shown and checked).
+  static LocationSettings _settings({int distanceFilter = 0}) {
+    if (kIsWeb) {
+      return WebSettings(
+        accuracy: LocationAccuracy.high,
+        maximumAge: Duration.zero,
+        timeLimit: const Duration(seconds: 15),
+        distanceFilter: distanceFilter,
+      );
+    }
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        forceLocationManager: false,
+        distanceFilter: distanceFilter,
+      );
+    }
+    return LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: distanceFilter,
+    );
+  }
+
+  void _announce(String msg) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Semantics(liveRegion: true, child: Text(msg)),
+        duration: const Duration(seconds: 6),
+      ));
+    SemanticsService.sendAnnouncement(
+        View.of(context), msg, Directionality.of(context));
+  }
+
+  void _setPosition(Position pos) {
+    ref.read(userLocationProvider.notifier).set(UserLocation(
+        LatLng(pos.latitude, pos.longitude),
+        accuracyM: pos.accuracy));
+  }
+
+  /// Warns about an inaccurate or far-away fix (Polish, announced).
+  void _warnAboutLocation(UserLocation loc) {
+    if (loc.isFarFromKrakow) {
+      _announce('Jesteś poza Krakowem — trasa zacznie się od Rynku Głównego. '
+          'Przytrzymaj mapę, aby wybrać start.');
+    } else if (loc.accuracyM > warnAccuracyM) {
+      _announce('Lokalizacja niedokładna (${formatAccuracy(loc.accuracyM)}). '
+          'Przytrzymaj mapę, aby ustawić start.');
+    }
+  }
+
+  void _setManualStart(LatLng point) {
+    ref.read(manualStartProvider.notifier).set(point);
+    ref.read(startPreferenceProvider.notifier).set(StartPreference.auto);
+    _announce('Start ustawiony');
+    ref.read(routeProvider.notifier).replan();
+  }
+
+  void _clearManualStart() {
+    ref.read(manualStartProvider.notifier).clear();
+    ref.read(startPreferenceProvider.notifier).set(StartPreference.auto);
+    ref.read(routeProvider.notifier).replan();
+  }
+
+  /// Cycles Rynek → GPS → chosen point (only options that are available).
+  void _cycleStart() {
+    final manual = ref.read(manualStartProvider);
+    final gps = ref.read(userLocationProvider);
+    final options = availableStarts(manual: manual, gps: gps);
+    final current = selectStart(
+            manual: manual,
+            gps: gps,
+            preference: ref.read(startPreferenceProvider))
+        .kind;
+    final next = options[(options.indexOf(current) + 1) % options.length];
+    ref.read(startPreferenceProvider.notifier).set(switch (next) {
+      StartKind.manual => StartPreference.manual,
+      StartKind.gps => StartPreference.gps,
+      StartKind.rynek => StartPreference.rynek,
+    });
+    ref.read(routeProvider.notifier).replan();
+  }
 
   Future<void> _locate() async {
     final messenger = ScaffoldMessenger.of(context);
@@ -56,16 +149,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           permission == LocationPermission.deniedForever) {
         return fail('Brak zgody na lokalizację.');
       }
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 15),
-        ),
-      );
+      final pos =
+          await Geolocator.getCurrentPosition(locationSettings: _settings());
       final here = LatLng(pos.latitude, pos.longitude);
       if (!mounted) return;
-      setState(() => _myLocation = here);
+      _setPosition(pos);
       _mapController.move(here, 16);
+      _warnAboutLocation(ref.read(userLocationProvider)!);
+      // Follow the user while the map is open.
+      _posSub ??= Geolocator.getPositionStream(
+              locationSettings: _settings(distanceFilter: 10))
+          .listen((p) {
+        if (mounted) _setPosition(p);
+      }, onError: (_) {});
     } catch (_) {
       fail('Nie udało się ustalić lokalizacji.');
     } finally {
@@ -75,7 +171,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   Future<void> _planRoute(Place place) async {
     setState(() => _routeCollapsed = false);
-    await ref.read(routeProvider.notifier).plan(place, myLocation: _myLocation);
+    await ref.read(routeProvider.notifier).plan(place);
     final points = ref.read(routeProvider).value?.points;
     if (!mounted || points == null || points.length < 2) return;
     _mapController.fitCamera(CameraFit.coordinates(
@@ -97,6 +193,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   @override
   Widget build(BuildContext context) {
     final route = ref.watch(routeProvider);
+    final hasManualStart = ref.watch(manualStartProvider) != null;
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -131,10 +228,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   child: _PlacesMap(
                     controller: _mapController,
                     style: _style,
-                    myLocation: _myLocation,
                     selected: _selected,
                     onSelect: _select,
                     onTapMap: () => setState(() => _selected = null),
+                    onLongPressMap: _setManualStart,
                   ),
                 ),
 
@@ -226,6 +323,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                               _routeCollapsed = true;
                               _selected = null;
                             }),
+                            onCycleStart: _cycleStart,
+                            onClearManualStart:
+                                hasManualStart ? _clearManualStart : null,
                           ),
                   )
                 else if (_selected != null)
@@ -237,6 +337,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       place: _selected!,
                       onClose: () => setState(() => _selected = null),
                       onRoute: () => _planRoute(_selected!),
+                      onClearStart: _clearManualStart,
                     ),
                   ),
               ],
@@ -691,24 +792,27 @@ class _PlacesMap extends ConsumerWidget {
   const _PlacesMap({
     required this.controller,
     required this.style,
-    required this.myLocation,
     required this.selected,
     required this.onSelect,
     required this.onTapMap,
+    required this.onLongPressMap,
   });
 
   final MapController controller;
   final _MapStyle style;
-  final LatLng? myLocation;
   final Place? selected;
   final ValueChanged<Place> onSelect;
   final VoidCallback onTapMap;
+  final ValueChanged<LatLng> onLongPressMap;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final places = ref.watch(filteredPlacesProvider).value ?? const [];
     final routePoints =
         ref.watch(routeProvider).value?.points ?? const <LatLng>[];
+    final location = ref.watch(userLocationProvider);
+    final myLocation = location?.point;
+    final manualStart = ref.watch(manualStartProvider);
 
     return FlutterMap(
       mapController: controller,
@@ -718,6 +822,7 @@ class _PlacesMap extends ConsumerWidget {
         minZoom: 11,
         maxZoom: 19,
         onTap: (_, _) => onTapMap(),
+        onLongPress: (_, point) => onLongPressMap(point),
       ),
       children: [
         // 1. Map Tiles
@@ -761,11 +866,22 @@ class _PlacesMap extends ConsumerWidget {
           ],
         ),
 
-        // 3. User Location Marker
+        // 3. User location: accuracy circle + dot
+        if (location != null && location.accuracyM > 0)
+          CircleLayer(circles: [
+            CircleMarker(
+              point: location.point,
+              radius: location.accuracyM,
+              useRadiusInMeter: true,
+              color: AppColors.accentCyan.withValues(alpha: 0.12),
+              borderColor: AppColors.accentCyan.withValues(alpha: 0.5),
+              borderStrokeWidth: 1.5,
+            ),
+          ]),
         if (myLocation != null)
           MarkerLayer(markers: [
             Marker(
-              point: myLocation!,
+              point: myLocation,
               width: 32,
               height: 32,
               child: Semantics(
@@ -786,6 +902,74 @@ class _PlacesMap extends ConsumerWidget {
                   child: const Center(
                     child: Icon(Icons.navigation_rounded, color: Colors.black, size: 14),
                   ),
+                ),
+              ),
+            ),
+          ]),
+
+        if (location != null && location.accuracyM > warnAccuracyM)
+          MarkerLayer(markers: [
+            Marker(
+              point: location.point,
+              width: 200,
+              height: 28,
+              alignment: const Alignment(0, -3),
+              child: Semantics(
+                label: 'Lokalizacja niedokładna '
+                    '(${formatAccuracy(location.accuracyM)})',
+                child: Center(
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceGlass,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.warn),
+                    ),
+                    child: ExcludeSemantics(
+                      child: Text(
+                        'Niedokładna ${formatAccuracy(location.accuracyM)}',
+                        style: const TextStyle(
+                            color: AppColors.warn,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ]),
+        if (manualStart != null)
+          MarkerLayer(markers: [
+            Marker(
+              point: manualStart,
+              width: 64,
+              height: 48,
+              alignment: Alignment.topCenter,
+              child: Semantics(
+                label: 'Punkt startowy trasy',
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const ExcludeSemantics(
+                        child: Text('Start',
+                            style: TextStyle(
+                                color: Color(0xFF090D12),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800)),
+                      ),
+                    ),
+                    const Icon(Icons.flag_rounded,
+                        color: AppColors.primary, size: 24),
+                  ],
                 ),
               ),
             ),
@@ -903,16 +1087,19 @@ class _PlacePreview extends ConsumerWidget {
     required this.place,
     required this.onClose,
     required this.onRoute,
+    required this.onClearStart,
   });
 
   final Place place;
   final VoidCallback onClose;
   final VoidCallback onRoute;
+  final VoidCallback onClearStart;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final match = ref.watch(placeMatchProvider(place));
     final filters = ref.watch(placeFiltersProvider);
+    final hasManualStart = ref.watch(manualStartProvider) != null;
     final text = Theme.of(context).textTheme;
     // Toilet / bench info appears in the preview only when its chip is on
     // (the full detail screen always shows everything).
@@ -1025,6 +1212,26 @@ class _PlacePreview extends ConsumerWidget {
                       .map((c) => '${c.feature.label}: ${c.status.style.label.toLowerCase()}')
                       .join(' · '),
                   style: text.bodySmall?.copyWith(color: AppColors.bad),
+                ),
+              ],
+              if (hasManualStart) ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    const Icon(Icons.flag_rounded,
+                        size: 16, color: AppColors.primary),
+                    const SizedBox(width: 6),
+                    Text('Start: wybrany punkt',
+                        style: text.bodySmall?.copyWith(color: AppColors.text)),
+                    const Text(' · '),
+                    TextButton(
+                      onPressed: onClearStart,
+                      style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          minimumSize: const Size(48, 32)),
+                      child: const Text('Usuń'),
+                    ),
+                  ],
                 ),
               ],
               const SizedBox(height: 14),

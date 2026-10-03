@@ -10,13 +10,13 @@ import '../../data/api/api_client.dart';
 import '../../data/models/needs_profile.dart';
 import '../../data/models/place.dart';
 import '../../data/repositories/profile_repository.dart';
+import 'route_start.dart';
+
+export 'route_start.dart' show rynekGlowny;
 
 /// OpenRouteService key, passed with
 /// `--dart-define-from-file=config/secrets.json` (never committed).
 const orsApiKey = String.fromEnvironment('ORS_API_KEY');
-
-/// Default start when GPS is off or far away: Rynek Główny.
-const rynekGlowny = LatLng(50.0617, 19.9373);
 
 class RouteSegment {
   const RouteSegment({
@@ -42,6 +42,7 @@ class PlannedRoute {
     required this.segments,
     required this.isDemo,
     this.fallbackReason,
+    this.relaxed = false,
   });
 
   final Place destination;
@@ -54,6 +55,9 @@ class PlannedRoute {
   /// true = sample route (no key / no network); must be labelled in UI.
   final bool isDemo;
   final String? fallbackReason;
+
+  /// true = found only after relaxing the wheelchair thresholds.
+  final bool relaxed;
 
   String get sourceLabel => isDemo
       ? 'Trasa przykładowa'
@@ -109,39 +113,64 @@ class RouteService {
       return demoRoute(from, startLabel, to, reason: 'Brak klucza OpenRouteService');
     }
     try {
-      return await _ors(from, startLabel, to, profile);
-    } catch (_) {
+      return await _ors(from, startLabel, to, profile, strict: true);
+    } on OrsException catch (e) {
+      if (e.retryable) {
+        try {
+          return await _ors(from, startLabel, to, profile, strict: false);
+        } catch (e2) {
+          return demoRoute(from, startLabel, to,
+              reason: 'OpenRouteService: ${_msg(e2)} — pokazano trasę przykładową');
+        }
+      }
       return demoRoute(from, startLabel, to,
-          reason: 'OpenRouteService niedostępny — pokazano trasę przykładową');
+          reason: 'OpenRouteService: ${e.message} — pokazano trasę przykładową');
+    } catch (e) {
+      return demoRoute(from, startLabel, to,
+          reason: 'OpenRouteService niedostępny (${_msg(e)}) — pokazano trasę przykładową');
     }
   }
 
-  Future<PlannedRoute> _ors(
-      LatLng from, String startLabel, Place to, NeedsProfile profile) async {
+  static String _msg(Object e) => e is OrsException ? e.message : '$e';
+
+  /// ORS codes meaning "no route found / point not routable".
+  static const retryCodes = {2004, 2009, 2010, 2099};
+
+  /// Builds the ORS request body; [strict] includes wheelchair restrictions.
+  static Map<String, dynamic> orsBody(
+      LatLng from, Place to, NeedsProfile profile, {bool strict = true}) {
     // ORS accepts only these values for the wheelchair profile.
     double nearest(List<double> allowed, double v) =>
         allowed.reduce((a, b) => (a - v).abs() <= (b - v).abs() ? a : b);
-
-    final body = {
+    return {
       'coordinates': [
         [from.longitude, from.latitude],
         [to.lng, to.lat],
       ],
+      'radiuses': [-1, -1],
       'instructions': true,
       'language': 'pl',
       'units': 'm',
-      'options': {
-        'profile_params': {
-          'restrictions': {
-            'maximum_sloped_kerb':
-                nearest([0.03, 0.06, 0.1], profile.maxKerbCm / 100),
-            'maximum_incline':
-                nearest([3, 6, 10, 15], profile.maxInclinePct.toDouble()).round(),
-            'minimum_width': profile.minWidthCm / 100,
+      if (strict)
+        'options': {
+          'profile_params': {
+            'restrictions': {
+              'maximum_sloped_kerb':
+                  nearest([0.03, 0.06, 0.1], profile.maxKerbCm / 100),
+              'maximum_incline': nearest(
+                      [3, 6, 10, 15], profile.maxInclinePct.toDouble())
+                  .round(),
+              'minimum_width': profile.minWidthCm / 100,
+            },
           },
         },
-      },
     };
+  }
+
+  Future<PlannedRoute> _ors(
+      LatLng from, String startLabel, Place to, NeedsProfile profile,
+      {required bool strict}) async {
+    final body = orsBody(from, to, profile, strict: strict);
 
     final res = await _client
         .post(
@@ -151,15 +180,37 @@ class RouteService {
           body: jsonEncode(body),
         )
         .timeout(const Duration(seconds: 12));
+    final decoded = _tryDecode(res.bodyBytes);
     if (res.statusCode != 200) {
-      throw Exception('ORS ${res.statusCode}');
+      final err = decoded is Map ? decoded['error'] : null;
+      final code = err is Map ? (err['code'] as num?)?.toInt() : null;
+      final message = err is Map
+          ? (err['message'] as String? ?? 'błąd ${res.statusCode}')
+          : (err is String ? err : 'błąd ${res.statusCode}');
+      throw OrsException(message, code: code);
     }
-    return parseOrs(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>,
-        to: to, startLabel: startLabel);
+    final features = decoded is Map ? decoded['features'] as List? : null;
+    if (features == null || features.isEmpty) {
+      throw const OrsException('brak trasy', code: 2009);
+    }
+    final route = parseOrs(decoded as Map<String, dynamic>,
+        to: to, startLabel: startLabel, relaxed: !strict);
+    if (route.points.length < 2) {
+      throw const OrsException('pusta trasa', code: 2009);
+    }
+    return route;
+  }
+
+  static Object? _tryDecode(List<int> bytes) {
+    try {
+      return jsonDecode(utf8.decode(bytes));
+    } catch (_) {
+      return null;
+    }
   }
 
   static PlannedRoute parseOrs(Map<String, dynamic> json,
-      {required Place to, required String startLabel}) {
+      {required Place to, required String startLabel, bool relaxed = false}) {
     final feature = (json['features'] as List).first as Map<String, dynamic>;
     final coords = (feature['geometry']['coordinates'] as List)
         .map((c) => LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble()))
@@ -185,6 +236,7 @@ class RouteService {
           ),
       ],
       isDemo: false,
+      relaxed: relaxed,
     );
   }
 
@@ -211,9 +263,11 @@ class RouteService {
           ),
       ],
       isDemo: fallback,
-      fallbackReason: fallback
-          ? 'Serwer: trasa w linii prostej (OpenRouteService niedostępny)'
-          : null,
+      relaxed: json['relaxed'] as bool? ?? false,
+      fallbackReason: json['fallbackReason'] as String? ??
+          (fallback
+              ? 'Serwer: trasa w linii prostej (OpenRouteService niedostępny)'
+              : null),
     );
   }
 
@@ -270,6 +324,15 @@ class RouteService {
   }
 }
 
+class OrsException implements Exception {
+  const OrsException(this.message, {this.code});
+  final String message;
+  final int? code;
+  bool get retryable => RouteService.retryCodes.contains(code);
+  @override
+  String toString() => 'OrsException($code): $message';
+}
+
 final routeServiceProvider = Provider((ref) =>
     RouteService(api: useApi ? ref.watch(apiClientProvider) : null));
 
@@ -277,15 +340,24 @@ class RouteNotifier extends Notifier<AsyncValue<PlannedRoute?>> {
   @override
   AsyncValue<PlannedRoute?> build() => const AsyncData(null);
 
-  Future<void> plan(Place to, {LatLng? myLocation}) async {
+  Place? _lastDestination;
+
+  /// Plans to [to]. Start: manual > GPS (near & accurate) > Rynek Główny.
+  /// [myLocation] overrides the GPS fix from [userLocationProvider].
+  Future<void> plan(Place to, {LatLng? myLocation, double? accuracyM}) async {
+    _lastDestination = to;
     final profile =
         ref.read(profileProvider).value ?? NeedsProfile.wheelchair;
-
-    // Use GPS only when the user is in Kraków; otherwise start at the Rynek.
-    final nearKrakow = myLocation != null &&
-        const Distance()(myLocation, rynekGlowny) < 15000;
-    final from = nearKrakow ? myLocation : rynekGlowny;
-    final label = nearKrakow ? 'Twoja lokalizacja' : 'Rynek Główny';
+    final gps = myLocation != null
+        ? UserLocation(myLocation, accuracyM: accuracyM ?? 0)
+        : ref.read(userLocationProvider);
+    final start = selectStart(
+      manual: ref.read(manualStartProvider),
+      gps: gps,
+      preference: ref.read(startPreferenceProvider),
+    );
+    final from = start.point;
+    final label = start.label;
 
     state = const AsyncLoading();
     state = AsyncData(await ref.read(routeServiceProvider).plan(
@@ -294,6 +366,12 @@ class RouteNotifier extends Notifier<AsyncValue<PlannedRoute?>> {
           to: to,
           profile: profile,
         ));
+  }
+
+  /// Re-plans the last destination (e.g. after the start changed).
+  Future<void> replan() async {
+    final to = _lastDestination;
+    if (to != null && state.value != null) await plan(to);
   }
 
   void clear() => state = const AsyncData(null);
