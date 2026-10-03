@@ -73,7 +73,7 @@ class RoutePanel extends StatelessWidget {
             context,
             show,
             onToggleAlternative ??
-                () => ref.read(showAlternativeProvider.notifier).state = !show);
+                () => ref.read(alternativeChoiceProvider.notifier).state = !show);
       });
     }
     return _panel(context, showAlternative ?? false, onToggleAlternative);

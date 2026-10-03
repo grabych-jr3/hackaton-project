@@ -317,8 +317,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                             showBarriers: ref.watch(routeBarriersEnabledProvider),
                             showAlternative: ref.watch(showAlternativeProvider),
                             onToggleAlternative: () => ref
-                                .read(showAlternativeProvider.notifier)
-                                .update((v) => !v),
+                                .read(alternativeChoiceProvider.notifier)
+                                .state = !ref.read(showAlternativeProvider),
                             onExpand: () => setState(() => _routeCollapsed = false),
                             onClear: () => ref.read(routeProvider.notifier).clear(),
                           )

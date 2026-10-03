@@ -645,9 +645,19 @@ class OrsException implements Exception {
 final routeServiceProvider = Provider((ref) =>
     RouteService(api: useApi ? ref.watch(apiClientProvider) : null));
 
+/// Explicit user choice: true = accessible alternative, false = walking,
+/// null = automatic. Reset on every new plan / clear.
+final alternativeChoiceProvider = StateProvider<bool?>((ref) => null);
+
 /// true = map and panel show [PlannedRoute.alternative] instead of the
-/// walking route. Reset on every new plan / clear.
-final showAlternativeProvider = StateProvider<bool>((ref) => false);
+/// walking route. With 'Pasujące do mnie' on, the accessible alternative is
+/// shown automatically (unless the user switched back to walking); with the
+/// chip off, always the plain walking route.
+final showAlternativeProvider = Provider<bool>((ref) {
+  if (!ref.watch(routeBarriersEnabledProvider)) return false;
+  final hasAlt = ref.watch(routeProvider).value?.alternative != null;
+  return hasAlt && (ref.watch(alternativeChoiceProvider) ?? true);
+});
 
 /// Wheelchair problem spots (barriers, alternative, notes) are shown only
 /// when the 'Pasujące do mnie' chip is on; otherwise a plain walking route.
@@ -681,7 +691,7 @@ class RouteNotifier extends Notifier<AsyncValue<PlannedRoute?>> {
     final from = start.point;
     final label = start.label;
 
-    ref.read(showAlternativeProvider.notifier).state = false;
+    ref.read(alternativeChoiceProvider.notifier).state = null;
     state = const AsyncLoading();
     state = AsyncData(await ref.read(routeServiceProvider).plan(
           from: from,
@@ -698,7 +708,7 @@ class RouteNotifier extends Notifier<AsyncValue<PlannedRoute?>> {
   }
 
   void clear() {
-    ref.read(showAlternativeProvider.notifier).state = false;
+    ref.read(alternativeChoiceProvider.notifier).state = null;
     state = const AsyncData(null);
   }
 }
