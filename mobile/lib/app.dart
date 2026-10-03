@@ -54,8 +54,9 @@ class _KrakowBezBarierAppState extends State<KrakowBezBarierApp> {
     return MaterialApp.router(
       title: 'Kraków bez barier',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.light(),
-      themeMode: ThemeMode.light,
+      theme: AppTheme.dark(),
+      darkTheme: AppTheme.dark(),
+      themeMode: ThemeMode.dark,
       routerConfig: _router,
       builder: (context, child) => PhoneFrame(child: _ProfileGate(child: child!)),
     );

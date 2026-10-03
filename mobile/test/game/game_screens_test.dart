@@ -32,6 +32,10 @@ class _FilePlacesRepository implements PlacesRepository {
 DateTime now = DateTime(2026, 10, 3, 12);
 
 Future<void> pumpScreen(WidgetTester tester, Widget screen) async {
+  // Decorative looping animations stop when reduce-motion is on.
+  tester.platformDispatcher.accessibilityFeaturesTestValue =
+      const FakeAccessibilityFeatures(disableAnimations: true);
+  addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
   tester.view.physicalSize = const Size(412, 915);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -55,13 +59,15 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     await pumpScreen(tester, const CatchScreen());
 
-    expect(find.text('DANE PRZYKŁADOWE'), findsOneWidget);
+    expect(find.text('DANE PRZYKŁADOWE'), findsWidgets);
+    await tester.tap(find.text('Ankieta'));
+    await tester.pumpAndSettle();
     expect(find.text('Saldo: 120 pkt'), findsOneWidget);
-    final send = find.ancestor(of: find.text('Wyślij zgłoszenie'), matching: find.bySubtype<FilledButton>());
-    await tester.scrollUntilVisible(find.text('Wyślij zgłoszenie'), 200, scrollable: find.byType(Scrollable).first);
+    final send = find.ancestor(of: find.text('Wyślij zgłoszenie i złap'), matching: find.bySubtype<FilledButton>());
+    await tester.scrollUntilVisible(find.text('Wyślij zgłoszenie i złap'), 200, scrollable: find.byType(Scrollable).first);
     expect(tester.widget<FilledButton>(send).onPressed, isNull);
 
-    await tester.tap(find.text('Brak podjazdu'));
+    await tester.tap(find.text('Brak podjazdu / rampy'));
     await tester.pump();
     await tester.ensureVisible(send);
     await tester.tap(send);
@@ -69,7 +75,7 @@ void main() {
 
     expect(find.textContaining('Złapano:'), findsOneWidget);
     expect(find.textContaining('Zgłoszenie niezweryfikowane'), findsOneWidget);
-    await tester.tap(find.text('Super!'));
+    await tester.tap(find.text('Odbierz punkty'));
     await tester.pumpAndSettle();
     expect(find.text('Saldo: 120 pkt'), findsNothing);
   });
@@ -99,7 +105,7 @@ void main() {
     await tester.tap(find.text('Aktywuj').first);
     await tester.pumpAndSettle();
     expect(find.text('70 pkt'), findsOneWidget);
-    expect(find.textContaining(RegExp(r'^KBB-')), findsOneWidget);
+    expect(find.textContaining(RegExp(r'KBB-')), findsOneWidget);
     expect(find.text('2:00:00'), findsOneWidget);
 
     now = now.add(const Duration(minutes: 90));

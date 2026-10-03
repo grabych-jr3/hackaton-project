@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -16,6 +17,15 @@ import 'place_filters.dart';
 
 const _krakowCenter = LatLng(50.0590, 19.9390);
 
+/// Accessible sample route through Krakow Old Town to Wawel
+const _accessibleRoutePoints = [
+  LatLng(50.0617, 19.9373), // Rynek Główny
+  LatLng(50.0614, 19.9380), // Sukiennice
+  LatLng(50.0595, 19.9385), // Grodzka / Plac Wszystkich Świętych
+  LatLng(50.0560, 19.9388), // Grodzka / Podzamcze
+  LatLng(50.0540, 19.9354), // Wawel Castle entrance (accessible ramp)
+];
+
 class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({super.key});
 
@@ -27,7 +37,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   final _mapController = MapController();
   bool _showList = false;
   Place? _selected;
-  _MapStyle _style = _MapStyle.streets;
+  _MapStyle _style = _MapStyle.dark;
   LatLng? _myLocation;
   bool _locating = false;
 
@@ -74,97 +84,140 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('Mapa'),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                color: AppColors.mint100,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.mint300),
+              ),
+              child: const Icon(Icons.explore_rounded, color: AppColors.primary, size: 20),
+            ),
+            const SizedBox(width: 10),
+            const Flexible(
+              child: Text(
+                'Kraków bez barier',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
         actions: [
           TextButton.icon(
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.primary,
+              backgroundColor: AppColors.surfaceElevated,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: const BorderSide(color: AppColors.border),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            ),
             onPressed: () => setState(() {
               _showList = !_showList;
               _selected = null;
             }),
-            icon: Icon(_showList ? Icons.map_outlined : Icons.list),
+            icon: Icon(_showList ? Icons.map_rounded : Icons.view_list_rounded, size: 18),
             label: Text(_showList ? 'Mapa' : 'Lista'),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 16),
         ],
       ),
-      body: Column(
-        children: [
-          _SearchAndFilters(onSubmitted: _showList ? null : _select),
-          Expanded(
-            child: _showList
-                ? const PlacesList()
-                : Stack(
+      body: _showList
+          ? Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  child: _FloatingSearchIsland(onSubmitted: null),
+                ),
+                const Expanded(child: PlacesList()),
+              ],
+            )
+          : Stack(
+              children: [
+                // 1. Interactive Map
+                Positioned.fill(
+                  child: _PlacesMap(
+                    controller: _mapController,
+                    style: _style,
+                    myLocation: _myLocation,
+                    selected: _selected,
+                    onSelect: _select,
+                    onTapMap: () => setState(() => _selected = null),
+                  ),
+                ),
+
+                // 2. Floating Top Search & Filter Island
+                Positioned(
+                  top: 12,
+                  left: 16,
+                  right: 16,
+                  child: _FloatingSearchIsland(onSubmitted: _select),
+                ),
+
+                // 3. Floating Map Controls (Right Side)
+                Positioned(
+                  top: 150,
+                  right: 16,
+                  child: Column(
                     children: [
-                      _PlacesMap(
-                        controller: _mapController,
-                        style: _style,
-                        myLocation: _myLocation,
-                        selected: _selected,
-                        onSelect: _select,
-                        onTapMap: () => setState(() => _selected = null),
+                      _GlassMapButton(
+                        tooltip: _style == _MapStyle.dark
+                            ? 'Widok uliczny'
+                            : (_style == _MapStyle.streets
+                                ? 'Widok satelitarny'
+                                : 'Tryb ciemny'),
+                        icon: _style == _MapStyle.dark
+                            ? Icons.dark_mode_rounded
+                            : (_style == _MapStyle.streets
+                                ? Icons.map_rounded
+                                : Icons.satellite_alt_rounded),
+                        onPressed: () => setState(() {
+                          if (_style == _MapStyle.dark) {
+                            _style = _MapStyle.streets;
+                          } else if (_style == _MapStyle.streets) {
+                            _style = _MapStyle.satellite;
+                          } else {
+                            _style = _MapStyle.dark;
+                          }
+                        }),
                       ),
-                      Positioned(
-                        top: 12,
-                        right: 12,
-                        child: Column(
-                          children: [
-                            FloatingActionButton.small(
-                              heroTag: 'layers',
-                              backgroundColor: AppColors.background,
-                              foregroundColor: AppColors.primary,
-                              tooltip: _style == _MapStyle.streets
-                                  ? 'Widok satelitarny'
-                                  : 'Widok mapy',
-                              onPressed: () => setState(() => _style =
-                                  _style == _MapStyle.streets
-                                      ? _MapStyle.satellite
-                                      : _MapStyle.streets),
-                              child: Icon(_style == _MapStyle.streets
-                                  ? Icons.satellite_alt_outlined
-                                  : Icons.map_outlined),
-                            ),
-                            const SizedBox(height: 8),
-                            FloatingActionButton.small(
-                              heroTag: 'locate',
-                              backgroundColor: AppColors.background,
-                              foregroundColor: AppColors.primary,
-                              tooltip: 'Moja lokalizacja',
-                              onPressed: _locating ? null : _locate,
-                              child: _locating
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(strokeWidth: 2),
-                                    )
-                                  : const Icon(Icons.my_location),
-                            ),
-                          ],
-                        ),
+                      const SizedBox(height: 10),
+                      _GlassMapButton(
+                        tooltip: 'Moja lokalizacja',
+                        icon: Icons.my_location_rounded,
+                        isLoading: _locating,
+                        onPressed: _locating ? null : _locate,
                       ),
-                      if (_selected != null)
-                        Positioned(
-                          left: 12,
-                          right: 12,
-                          bottom: 12,
-                          child: _PlacePreview(
-                            place: _selected!,
-                            onClose: () => setState(() => _selected = null),
-                          ),
-                        ),
                     ],
                   ),
-          ),
-        ],
-      ),
+                ),
+
+                // 4. Floating Place Detail Preview Sheet (Bottom)
+                if (_selected != null)
+                  Positioned(
+                    left: 16,
+                    right: 16,
+                    bottom: 96, // Above floating bottom nav
+                    child: _PlacePreview(
+                      place: _selected!,
+                      onClose: () => setState(() => _selected = null),
+                    ),
+                  ),
+              ],
+            ),
     );
   }
 }
 
-class _SearchAndFilters extends ConsumerWidget {
-  const _SearchAndFilters({required this.onSubmitted});
+class _FloatingSearchIsland extends ConsumerWidget {
+  const _FloatingSearchIsland({required this.onSubmitted});
 
-  /// On the map view, submitting the search jumps to the first result.
   final ValueChanged<Place>? onSubmitted;
 
   @override
@@ -177,56 +230,177 @@ class _SearchAndFilters extends ConsumerWidget {
         Padding(
           padding: const EdgeInsets.only(right: 8),
           child: FilterChip(
-            avatar: Icon(icon, size: 18),
+            avatar: Icon(icon, size: 16, color: value ? AppColors.primary : AppColors.textMuted),
             label: Text(label),
             selected: value,
             showCheckmark: false,
+            backgroundColor: AppColors.surfaceElevated,
+            selectedColor: AppColors.mint100,
+            side: BorderSide(color: value ? AppColors.primary : AppColors.border),
+            labelStyle: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: value ? AppColors.primary : AppColors.text,
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
             onSelected: (v) => notifier.update((f) => change(f, v)),
           ),
         );
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: Column(
-        children: [
-          TextField(
-            decoration: InputDecoration(
-              hintText: 'Szukaj miejsca w Krakowie',
-              prefixIcon: const Icon(Icons.search),
-              filled: true,
-              fillColor: AppColors.surface,
-              contentPadding: const EdgeInsets.symmetric(vertical: 12),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(16),
-                borderSide: const BorderSide(color: AppColors.border),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceGlass,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: AppColors.border, width: 1.2),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x66000000),
+                blurRadius: 20,
+                offset: Offset(0, 8),
               ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(16),
-                borderSide: const BorderSide(color: AppColors.border),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Search input
+              Row(
+                children: [
+                  const Icon(Icons.search_rounded, color: AppColors.primary, size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextField(
+                      decoration: const InputDecoration(
+                        hintText: 'Gdzie chcesz iść? Szukaj w Krakowie...',
+                        hintStyle: TextStyle(color: AppColors.textDim, fontSize: 14),
+                        filled: false,
+                        contentPadding: EdgeInsets.zero,
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                      ),
+                      style: const TextStyle(fontSize: 14, color: AppColors.text),
+                      textInputAction: TextInputAction.search,
+                      onChanged: (q) => notifier.update((f) => f.copyWith(query: q)),
+                      onSubmitted: (_) {
+                        final first = ref.read(filteredPlacesProvider).value?.firstOrNull;
+                        if (first != null) onSubmitted?.call(first);
+                      },
+                    ),
+                  ),
+                  // Crowd status indicator (Live crowd HUD)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.mint100,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: AppColors.mint300),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 7,
+                          height: 7,
+                          decoration: const BoxDecoration(
+                            color: AppColors.primary,
+                            shape: BoxShape.circle,
+                            boxShadow: [
+                              BoxShadow(color: AppColors.primary, blurRadius: 6),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        const Text(
+                          'Ruch: Mały',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              // Filter chips row
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    chip('Pasujące do mnie', Icons.accessible_rounded, filters.onlyMatching,
+                        (f, v) => f.copyWith(onlyMatching: v)),
+                    chip('Toaleta', Icons.wc_rounded, filters.toilet,
+                        (f, v) => f.copyWith(toilet: v)),
+                    chip('Ławki', Icons.chair_rounded, filters.benches,
+                        (f, v) => f.copyWith(benches: v)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GlassMapButton extends StatelessWidget {
+  const _GlassMapButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+    this.isLoading = false,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+  final bool isLoading;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+        child: Material(
+          color: AppColors.surfaceGlass,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: AppColors.border, width: 1.2),
+          ),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: onPressed,
+            child: SizedBox(
+              width: 44,
+              height: 44,
+              child: Tooltip(
+                message: tooltip,
+                child: Center(
+                  child: isLoading
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors.primary,
+                          ),
+                        )
+                      : Icon(icon, color: AppColors.primary, size: 22),
+                ),
               ),
             ),
-            textInputAction: TextInputAction.search,
-            onChanged: (q) => notifier.update((f) => f.copyWith(query: q)),
-            onSubmitted: (_) {
-              final first = ref.read(filteredPlacesProvider).value?.firstOrNull;
-              if (first != null) onSubmitted?.call(first);
-            },
           ),
-          const SizedBox(height: 8),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                chip('Pasujące do mnie', Icons.accessible, filters.onlyMatching,
-                    (f, v) => f.copyWith(onlyMatching: v)),
-                chip('Toaleta', Icons.wc, filters.toilet,
-                    (f, v) => f.copyWith(toilet: v)),
-                chip('Ławki', Icons.chair_outlined, filters.benches,
-                    (f, v) => f.copyWith(benches: v)),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -263,6 +437,7 @@ class _PlacesMap extends ConsumerWidget {
         onTap: (_, _) => onTapMap(),
       ),
       children: [
+        // 1. Map Tiles
         TileLayer(
           key: ValueKey(style),
           urlTemplate: style.urlTemplate,
@@ -271,34 +446,67 @@ class _PlacesMap extends ConsumerWidget {
           userAgentPackageName: 'pl.krakowbezbarier.app',
           tileProvider: kIsWeb ? _PlainWebTileProvider() : NetworkTileProvider(),
         ),
+
+        // 2. Glowing Accessible Navigation Route (Dual-layer polyline for glow effect)
+        PolylineLayer(
+          polylines: [
+            // Outer glow line
+            Polyline(
+              points: _accessibleRoutePoints,
+              strokeWidth: 8.0,
+              color: AppColors.primary.withValues(alpha: 0.35),
+              strokeCap: StrokeCap.round,
+              strokeJoin: StrokeJoin.round,
+            ),
+            // Inner crisp core line
+            Polyline(
+              points: _accessibleRoutePoints,
+              strokeWidth: 3.5,
+              color: AppColors.primaryBright,
+              strokeCap: StrokeCap.round,
+              strokeJoin: StrokeJoin.round,
+            ),
+          ],
+        ),
+
+        // 3. User Location Marker
         if (myLocation != null)
           MarkerLayer(markers: [
             Marker(
               point: myLocation!,
-              width: 28,
-              height: 28,
+              width: 32,
+              height: 32,
               child: Semantics(
                 label: 'Twoja lokalizacja',
                 child: Container(
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1A73E8),
+                    color: AppColors.accentCyan,
                     shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white, width: 4),
-                    boxShadow: const [
-                      BoxShadow(color: Color(0x551A73E8), blurRadius: 12, spreadRadius: 4),
+                    border: Border.all(color: Colors.white, width: 3.5),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.accentCyan.withValues(alpha: 0.6),
+                        blurRadius: 14,
+                        spreadRadius: 4,
+                      ),
                     ],
+                  ),
+                  child: const Center(
+                    child: Icon(Icons.navigation_rounded, color: Colors.black, size: 14),
                   ),
                 ),
               ),
             ),
           ]),
+
+        // 4. Place Markers with Accessibility Badges
         MarkerLayer(
           markers: [
             for (final place in places)
               Marker(
                 point: LatLng(place.lat, place.lng),
-                width: 48,
-                height: 48,
+                width: 52,
+                height: 52,
                 child: _PlaceMarker(
                   place: place,
                   selected: place.id == selected?.id,
@@ -307,6 +515,8 @@ class _PlacesMap extends ConsumerWidget {
               ),
           ],
         ),
+
+        // 5. Attribution
         RichAttributionWidget(
           alignment: AttributionAlignment.bottomLeft,
           attributions: [
@@ -343,30 +553,50 @@ class _PlaceMarker extends ConsumerWidget {
         onTap: onTap,
         child: Stack(
           clipBehavior: Clip.none,
+          alignment: Alignment.center,
           children: [
             AnimatedContainer(
-              duration: const Duration(milliseconds: 150),
-              margin: EdgeInsets.all(selected ? 0 : 4),
+              duration: const Duration(milliseconds: 200),
+              width: selected ? 46 : 38,
+              height: selected ? 46 : 38,
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: AppColors.surfaceElevated,
                 shape: BoxShape.circle,
-                border: Border.all(color: color, width: selected ? 4 : 3),
-                boxShadow: const [
-                  BoxShadow(color: Color(0x330F1F1A), blurRadius: 6, offset: Offset(0, 2)),
+                border: Border.all(
+                  color: selected ? AppColors.primaryBright : color,
+                  width: selected ? 3.0 : 2.0,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: (selected ? AppColors.primary : color).withValues(alpha: 0.4),
+                    blurRadius: selected ? 12 : 6,
+                    spreadRadius: selected ? 2 : 0,
+                  ),
                 ],
               ),
               child: Center(
-                child: Icon(place.category.icon, size: 20, color: AppColors.text),
+                child: Icon(
+                  place.category.icon,
+                  size: selected ? 22 : 18,
+                  color: selected ? AppColors.primary : AppColors.text,
+                ),
               ),
             ),
             if (style != null)
               Positioned(
-                right: -2,
-                top: -2,
+                right: 2,
+                top: 2,
                 child: Container(
-                  padding: const EdgeInsets.all(2),
-                  decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-                  child: Icon(style.icon, size: 12, color: Colors.white),
+                  padding: const EdgeInsets.all(2.5),
+                  decoration: BoxDecoration(
+                    color: color,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: AppColors.background, width: 1.5),
+                    boxShadow: [
+                      BoxShadow(color: color.withValues(alpha: 0.6), blurRadius: 4),
+                    ],
+                  ),
+                  child: Icon(style.icon, size: 10, color: Colors.black),
                 ),
               ),
           ],
@@ -387,77 +617,120 @@ class _PlacePreview extends ConsumerWidget {
     final match = ref.watch(placeMatchProvider(place));
     final text = Theme.of(context).textTheme;
 
-    return Material(
-      color: AppColors.background,
-      elevation: 6,
-      shadowColor: const Color(0x330E7A5A),
-      borderRadius: BorderRadius.circular(20),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 8, 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(place.category.icon, color: AppColors.primary),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(place.name,
-                      style: text.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
-                ),
-                IconButton(
-                  onPressed: onClose,
-                  icon: const Icon(Icons.close),
-                  tooltip: 'Zamknij',
-                ),
-              ],
-            ),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                if (match != null) StatusChip(match.verdict.style, dense: true),
-                if (place.isDemo) const DemoBadge(),
-              ],
-            ),
-            if (match != null && match.problems.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                match.problems
-                    .map((c) => '${c.feature.label}: ${c.status.style.label.toLowerCase()}')
-                    .join(' · '),
-                style: text.bodySmall?.copyWith(color: AppColors.textMuted),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(24),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 14, 14, 16),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceGlass,
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: AppColors.border, width: 1.2),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x77000000),
+                blurRadius: 30,
+                offset: Offset(0, 10),
               ),
             ],
-            const SizedBox(height: 12),
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: FilledButton(
-                onPressed: () => context.push('/place/${place.id}'),
-                style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
-                child: const Text('Szczegóły dostępności'),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: AppColors.mint100,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(place.category.icon, color: AppColors.primary, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          place.name,
+                          style: text.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.text,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        if (place.address != null)
+                          Text(
+                            place.address!,
+                            style: text.bodySmall?.copyWith(color: AppColors.textMuted),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: onClose,
+                    icon: const Icon(Icons.close_rounded, color: AppColors.textMuted),
+                    tooltip: 'Zamknij',
+                  ),
+                ],
               ),
-            ),
-          ],
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  if (match != null) StatusChip(match.verdict.style, dense: true),
+                  if (place.isDemo) const DemoBadge(),
+                ],
+              ),
+              if (match != null && match.problems.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  match.problems
+                      .map((c) => '${c.feature.label}: ${c.status.style.label.toLowerCase()}')
+                      .join(' · '),
+                  style: text.bodySmall?.copyWith(color: AppColors.bad),
+                ),
+              ],
+              const SizedBox(height: 14),
+              FilledButton.icon(
+                onPressed: () => context.push('/place/${place.id}'),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: const Color(0xFF090D12),
+                ),
+                icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+                label: const Text('Szczegóły dostępności'),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-/// On web, custom headers (User-Agent) trigger a CORS preflight that the
-/// OSM tile server rejects, so tiles are loaded as plain images.
 class _PlainWebTileProvider extends TileProvider {
   @override
   ImageProvider getImage(TileCoordinates coordinates, TileLayer options) =>
       NetworkImage(getTileUrl(coordinates, options));
 }
 
-/// Base layers. Streets: Stadia OSM Bright (colored, free on localhost; a
-/// deployed web domain must be registered at stadiamaps.com). Satellite: Esri
-/// World Imagery (attribution required).
+/// Base map tile styles
 enum _MapStyle {
+  dark(
+    'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png',
+    ['OpenStreetMap contributors', 'Stadia Maps', 'OpenMapTiles'],
+    retina: true,
+    maxNativeZoom: 19,
+  ),
   streets(
     'https://tiles.stadiamaps.com/tiles/osm_bright/{z}/{x}/{y}{r}.png',
     ['OpenStreetMap contributors', 'Stadia Maps', 'OpenMapTiles'],

@@ -22,7 +22,7 @@ class PhoneFrame extends StatelessWidget {
 
         final height = constraints.maxHeight.clamp(0.0, _phoneSize.height);
         return ColoredBox(
-          color: AppColors.mint100,
+          color: const Color(0xFF06090D),
           child: Center(
             child: Container(
               width: _phoneSize.width,
@@ -31,10 +31,16 @@ class PhoneFrame extends StatelessWidget {
               decoration: BoxDecoration(
                 color: AppColors.background,
                 borderRadius: BorderRadius.circular(36),
-                border: Border.all(color: AppColors.border, width: 8),
+                border: Border.all(color: AppColors.border, width: 6),
                 boxShadow: const [
                   BoxShadow(
-                    color: Color(0x1F0E7A5A),
+                    color: Color(0x3300E599),
+                    blurRadius: 50,
+                    spreadRadius: -10,
+                    offset: Offset(0, 20),
+                  ),
+                  BoxShadow(
+                    color: Color(0x99000000),
                     blurRadius: 40,
                     offset: Offset(0, 16),
                   ),
