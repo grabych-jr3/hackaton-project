@@ -30,7 +30,15 @@ public final class FactValidator {
                     requireNumber(feature, value, 0, 50, false);
                 }
             }
-            case "doorWidth" -> requireNumber(feature, value, 30, 300, false);
+            case "doorWidth" -> {
+                if (value.isTextual()) {
+                    if (!RANGE.matcher(value.asText()).matches()) {
+                        throw ApiException.badRequest("doorWidth range must look like 70-90, >90 or <70");
+                    }
+                } else {
+                    requireNumber(feature, value, 30, 300, false);
+                }
+            }
             case "incline" -> requireNumber(feature, value, 0, 40, false);
             default -> {
                 if (!value.isBoolean()) throw ApiException.badRequest(feature + " must be boolean");

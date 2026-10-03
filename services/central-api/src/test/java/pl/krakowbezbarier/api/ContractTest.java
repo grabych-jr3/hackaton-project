@@ -47,7 +47,7 @@ class ContractTest {
     @Test
     void routeResponseShape() throws Exception {
         var r = new RouteResponse(10, 9, List.<double[]>of(new double[]{50.06, 19.93}),
-                List.of(new Segment("x", 10, List.of())), List.of(0, 1), "openrouteservice", false);
+                List.of(new Segment("x", 10, null)), List.of(0, 1), "openrouteservice", false);
         JsonNode j = om.readTree(om.writeValueAsString(r));
         assertEquals(50.06, j.at("/geometry/0/0").asDouble());
         assertTrue(j.has("distanceM") && j.has("durationS") && j.has("fallback"));
