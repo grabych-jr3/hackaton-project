@@ -13,18 +13,11 @@ import '../place/place_labels.dart';
 import '../place/place_providers.dart';
 import '../place/places_list.dart';
 import '../place/status_chip.dart';
+import '../route/route_panel.dart';
+import '../route/route_service.dart';
 import 'place_filters.dart';
 
 const _krakowCenter = LatLng(50.0590, 19.9390);
-
-/// Accessible sample route through Krakow Old Town to Wawel
-const _accessibleRoutePoints = [
-  LatLng(50.0617, 19.9373), // Rynek Główny
-  LatLng(50.0614, 19.9380), // Sukiennice
-  LatLng(50.0595, 19.9385), // Grodzka / Plac Wszystkich Świętych
-  LatLng(50.0560, 19.9388), // Grodzka / Podzamcze
-  LatLng(50.0540, 19.9354), // Wawel Castle entrance (accessible ramp)
-];
 
 class MapScreen extends ConsumerStatefulWidget {
   const MapScreen({super.key});
@@ -76,6 +69,16 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     }
   }
 
+  Future<void> _planRoute(Place place) async {
+    await ref.read(routeProvider.notifier).plan(place, myLocation: _myLocation);
+    final points = ref.read(routeProvider).value?.points;
+    if (!mounted || points == null || points.length < 2) return;
+    _mapController.fitCamera(CameraFit.coordinates(
+      coordinates: points,
+      padding: const EdgeInsets.fromLTRB(40, 160, 40, 380),
+    ));
+  }
+
   void _select(Place place) {
     setState(() => _selected = place);
     _mapController.move(LatLng(place.lat, place.lng), 16);
@@ -83,6 +86,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final route = ref.watch(routeProvider);
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -198,8 +202,25 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   ),
                 ),
 
-                // 4. Floating Place Detail Preview Sheet (Bottom)
-                if (_selected != null)
+                // 4. Route panel (text list of segments) or place preview
+                if (route.isLoading)
+                  const Positioned(
+                    left: 16,
+                    right: 16,
+                    bottom: 96,
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (route.value != null)
+                  Positioned(
+                    left: 16,
+                    right: 16,
+                    bottom: 96,
+                    child: RoutePanel(
+                      route: route.value!,
+                      onClose: () => ref.read(routeProvider.notifier).clear(),
+                    ),
+                  )
+                else if (_selected != null)
                   Positioned(
                     left: 16,
                     right: 16,
@@ -207,6 +228,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     child: _PlacePreview(
                       place: _selected!,
                       onClose: () => setState(() => _selected = null),
+                      onRoute: () => _planRoute(_selected!),
                     ),
                   ),
               ],
@@ -426,6 +448,8 @@ class _PlacesMap extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final places = ref.watch(filteredPlacesProvider).value ?? const [];
+    final routePoints =
+        ref.watch(routeProvider).value?.points ?? const <LatLng>[];
 
     return FlutterMap(
       mapController: controller,
@@ -446,13 +470,22 @@ class _PlacesMap extends ConsumerWidget {
           userAgentPackageName: 'pl.krakowbezbarier.app',
           tileProvider: kIsWeb ? _PlainWebTileProvider() : NetworkTileProvider(),
         ),
+        if (style.labelsUrl != null)
+          TileLayer(
+            key: ValueKey('${style.name}-labels'),
+            urlTemplate: style.labelsUrl,
+            maxNativeZoom: style.maxNativeZoom,
+            userAgentPackageName: 'pl.krakowbezbarier.app',
+            tileProvider: kIsWeb ? _PlainWebTileProvider() : NetworkTileProvider(),
+          ),
 
-        // 2. Glowing Accessible Navigation Route (Dual-layer polyline for glow effect)
+        // 2. Planned accessible route (ORS or labelled demo)
+        if (routePoints.length > 1)
         PolylineLayer(
           polylines: [
             // Outer glow line
             Polyline(
-              points: _accessibleRoutePoints,
+              points: routePoints,
               strokeWidth: 8.0,
               color: AppColors.primary.withValues(alpha: 0.35),
               strokeCap: StrokeCap.round,
@@ -460,7 +493,7 @@ class _PlacesMap extends ConsumerWidget {
             ),
             // Inner crisp core line
             Polyline(
-              points: _accessibleRoutePoints,
+              points: routePoints,
               strokeWidth: 3.5,
               color: AppColors.primaryBright,
               strokeCap: StrokeCap.round,
@@ -607,10 +640,15 @@ class _PlaceMarker extends ConsumerWidget {
 }
 
 class _PlacePreview extends ConsumerWidget {
-  const _PlacePreview({required this.place, required this.onClose});
+  const _PlacePreview({
+    required this.place,
+    required this.onClose,
+    required this.onRoute,
+  });
 
   final Place place;
   final VoidCallback onClose;
+  final VoidCallback onRoute;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -699,15 +737,36 @@ class _PlacePreview extends ConsumerWidget {
                 ),
               ],
               const SizedBox(height: 14),
-              FilledButton.icon(
-                onPressed: () => context.push('/place/${place.id}'),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: const Color(0xFF090D12),
-                ),
-                icon: const Icon(Icons.arrow_forward_rounded, size: 18),
-                label: const Text('Szczegóły dostępności'),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: onRoute,
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
+                        foregroundColor: AppColors.primary,
+                        side: const BorderSide(color: AppColors.primary),
+                      ),
+                      icon: const Icon(Icons.route_rounded, size: 18),
+                      label: const Text('Trasa'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    flex: 2,
+                    child: FilledButton.icon(
+                      onPressed: () => context.push('/place/${place.id}'),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: const Color(0xFF090D12),
+                      ),
+                      icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+                      label: const Text('Szczegóły dostępności',
+                          overflow: TextOverflow.ellipsis),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -726,16 +785,18 @@ class _PlainWebTileProvider extends TileProvider {
 /// Base map tile styles
 enum _MapStyle {
   dark(
-    'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png',
-    ['OpenStreetMap contributors', 'Stadia Maps', 'OpenMapTiles'],
-    retina: true,
-    maxNativeZoom: 19,
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    ['Esri, HERE, Garmin, OpenStreetMap contributors'],
+    retina: false,
+    maxNativeZoom: 16,
+    labelsUrl:
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
   ),
   streets(
-    'https://tiles.stadiamaps.com/tiles/osm_bright/{z}/{x}/{y}{r}.png',
-    ['OpenStreetMap contributors', 'Stadia Maps', 'OpenMapTiles'],
-    retina: true,
-    maxNativeZoom: 20,
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    ['Esri, HERE, Garmin, OpenStreetMap contributors'],
+    retina: false,
+    maxNativeZoom: 19,
   ),
   satellite(
     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -745,7 +806,10 @@ enum _MapStyle {
   );
 
   const _MapStyle(this.urlTemplate, this.attributions,
-      {required this.retina, required this.maxNativeZoom});
+      {required this.retina, required this.maxNativeZoom, this.labelsUrl});
+
+  /// Optional transparent labels layer drawn over the base tiles.
+  final String? labelsUrl;
 
   final String urlTemplate;
   final List<String> attributions;
