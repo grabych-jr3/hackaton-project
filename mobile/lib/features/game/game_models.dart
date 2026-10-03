@@ -148,6 +148,17 @@ class BarrierReport {
     return s;
   }
 
+  /// API payload (`POST /game/reports` → `report`): Dart field names, enums by name.
+  Map<String, dynamic> toJson() => {
+        'placeId': placeId,
+        'steps': steps,
+        'curb': curb.name,
+        'passage': passage.name,
+        'noRamp': noRamp,
+        'uneven': uneven,
+        'obstacles': obstacles,
+      };
+
   bool get isEmpty =>
       steps == 0 &&
       curb == CurbRange.none &&

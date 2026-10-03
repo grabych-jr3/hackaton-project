@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../core/widgets/offline_banner.dart';
 import '../../data/models/place.dart';
 import '../place/place_labels.dart';
 import '../place/place_providers.dart';
@@ -141,6 +142,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                   child: _FloatingSearchIsland(onSubmitted: null),
                 ),
+                const OfflineBanner(),
                 const Expanded(child: PlacesList()),
               ],
             )
@@ -164,6 +166,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   left: 16,
                   right: 16,
                   child: _FloatingSearchIsland(onSubmitted: _select),
+                ),
+
+                // Offline notice (API mode, server unreachable).
+                const Positioned(
+                  top: 112,
+                  left: 16,
+                  right: 72,
+                  child: Align(alignment: Alignment.topLeft, child: OfflineBanner()),
                 ),
 
                 // 3. Floating Map Controls (Right Side)
