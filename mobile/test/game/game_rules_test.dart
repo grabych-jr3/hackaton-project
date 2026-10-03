@@ -38,15 +38,52 @@ void main() {
     expect(rarityFor(heavy.severity, Random(1)), Rarity.legendary);
   });
 
-  test('submitting a report adds creature and its points', () {
+  test('submitting a report adds creature but no points', () {
     final rules = GameRules(catalog, Random(42));
     const start = GameState(points: 100);
     final (next, result) = rules.submitReport(
         start, const BarrierReport(steps: 5, curb: CurbRange.high, passage: PassageWidth.narrow, noRamp: true, uneven: true, obstacles: true));
     expect(result.species.rarity, Rarity.legendary);
     expect(result.species.name, 'Smok');
-    expect(next.points, 250);
+    expect(result.points, 150); // sell value, not awarded
+    expect(next.points, 100);
     expect(next.caught['smok'], 1);
+  });
+
+  test('catalog species carry sellValue and description; defaults by rarity', () {
+    for (final s in catalog.species) {
+      expect(s.sellValue, s.rarity.points);
+      expect(s.description, isNotEmpty);
+    }
+    final bare = Species.fromJson(
+        {'id': 'x', 'name': 'X', 'emoji': 'x', 'rarity': 'epic'});
+    expect(bare.sellValue, 60);
+    expect(bare.description, isNull);
+  });
+
+  test('sell adds sellValue * count and removes creatures', () {
+    final rules = GameRules(catalog, Random(1));
+    const start = GameState(points: 5, caught: {'sowa': 3, 'smok': 1});
+    final r = rules.sell(start, 'sowa', 2);
+    expect(r.earned, 50);
+    expect(r.state.points, 55);
+    expect(r.state.caught['sowa'], 1);
+    final all = rules.sell(r.state, 'smok', 1);
+    expect(all.earned, 150);
+    expect(all.state.points, 205);
+    expect(all.state.caught.containsKey('smok'), isFalse);
+  });
+
+  test('sell validation', () {
+    final rules = GameRules(catalog, Random(1));
+    const st = GameState(points: 0, caught: {'lis': 2});
+    Matcher fails(SellFailure f) =>
+        throwsA(isA<SellException>().having((e) => e.failure, 'failure', f));
+    expect(() => rules.sell(st, 'lis', 0), fails(SellFailure.invalidCount));
+    expect(() => rules.sell(st, 'lis', -1), fails(SellFailure.invalidCount));
+    expect(() => rules.sell(st, 'lis', 3), fails(SellFailure.notEnoughCreatures));
+    expect(() => rules.sell(st, 'sowa', 1), fails(SellFailure.notEnoughCreatures));
+    expect(() => rules.sell(st, 'nope', 1), fails(SellFailure.unknownSpecies));
   });
 
   test('voucher activation deducts points and expires after 2h', () {

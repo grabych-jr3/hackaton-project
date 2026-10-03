@@ -139,7 +139,8 @@ class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProv
                 border: Border.all(color: AppColors.border),
               ),
               child: Text(
-                '${result.species.rarity.label} · +${result.points} pkt',
+                '${result.species.rarity.label} · Wartość: ${result.points} pkt — sprzedaj w Kolekcji',
+                textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: AppColors.primary,
                   fontWeight: FontWeight.w700,
@@ -163,7 +164,7 @@ class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProv
               foregroundColor: const Color(0xFF090D12),
             ),
             onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Odbierz punkty'),
+            child: const Text('Do kolekcji'),
           ),
         ],
       ),

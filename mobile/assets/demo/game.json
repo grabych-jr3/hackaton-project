@@ -3,14 +3,14 @@
   "isDemo": true,
   "initialPoints": 120,
   "species": [
-    {"id": "golab", "name": "Gołąb", "emoji": "🐦", "rarity": "common"},
-    {"id": "jez", "name": "Jeż", "emoji": "🦔", "rarity": "common"},
-    {"id": "lis", "name": "Lis", "emoji": "🦊", "rarity": "common"},
-    {"id": "sowa", "name": "Sowa", "emoji": "🦉", "rarity": "rare"},
-    {"id": "wydra", "name": "Wydra", "emoji": "🦦", "rarity": "rare"},
-    {"id": "bocian", "name": "Bocian", "emoji": "🕊️", "rarity": "epic"},
-    {"id": "niedzwiedz", "name": "Niedźwiedź", "emoji": "🐻", "rarity": "epic"},
-    {"id": "smok", "name": "Smok", "emoji": "🐉", "rarity": "legendary"}
+    {"id": "golab", "name": "Gołąb", "emoji": "🐦", "rarity": "common", "sellValue": 10, "description": "Stały bywalec Rynku Głównego — zna każdy gzyms Sukiennic i wie, gdzie krawężnik jest za wysoki."},
+    {"id": "jez", "name": "Jeż", "emoji": "🦔", "rarity": "common", "sellValue": 10, "description": "Nocny spacerowicz z Plant. Wolno, ale dokładnie sprawdza każdą nierówność chodnika."},
+    {"id": "lis", "name": "Lis", "emoji": "🦊", "rarity": "common", "sellValue": 10, "description": "Sprytny mieszkaniec Lasku Wolskiego, który zawsze znajdzie objazd wokół schodów."},
+    {"id": "sowa", "name": "Sowa", "emoji": "🦉", "rarity": "rare", "sellValue": 25, "description": "Czuwa nad Collegium Maius i notuje, które bramy są za wąskie dla wózka."},
+    {"id": "wydra", "name": "Wydra", "emoji": "🦦", "rarity": "rare", "sellValue": 25, "description": "Pływa wzdłuż Wisły pod Wawelem i wypatruje zejść na bulwary bez rampy."},
+    {"id": "bocian", "name": "Bocian", "emoji": "🕊️", "rarity": "epic", "sellValue": 60, "description": "Rzadki gość nad Nową Hutą — z góry widzi wszystkie przejścia bez podjazdów."},
+    {"id": "niedzwiedz", "name": "Niedźwiedź", "emoji": "🐻", "rarity": "epic", "sellValue": 60, "description": "Silny strażnik Kazimierza, który odsunie każdą przeszkodę z chodnika."},
+    {"id": "smok", "name": "Smok", "emoji": "🐉", "rarity": "legendary", "sellValue": 150, "description": "Smok Wawelski we własnej osobie! Pojawia się tam, gdzie barier jest najwięcej."}
   ],
   "offers": [
     {"id": "kawa-rynek", "partner": "Kawiarnia Pod Arkadami (demo)", "placeId": "sukiennice", "discount": "-20% na kawę", "cost": 50, "verifiedAccess": true},

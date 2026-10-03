@@ -17,18 +17,34 @@ enum Rarity {
 }
 
 class Species {
-  const Species({required this.id, required this.name, required this.emoji, required this.rarity});
+  const Species({
+    required this.id,
+    required this.name,
+    required this.emoji,
+    required this.rarity,
+    int? sellValue,
+    this.description,
+  }) : _sellValue = sellValue;
 
   final String id;
   final String name;
   final String emoji;
   final Rarity rarity;
+  final int? _sellValue;
+
+  /// Optional Polish flavour text.
+  final String? description;
+
+  /// Points earned for selling one piece; defaults to the rarity value.
+  int get sellValue => _sellValue ?? rarity.points;
 
   factory Species.fromJson(Map<String, dynamic> j) => Species(
         id: j['id'] as String,
         name: j['name'] as String,
         emoji: j['emoji'] as String,
         rarity: Rarity.fromJson(j['rarity'] as String),
+        sellValue: (j['sellValue'] as num?)?.toInt(),
+        description: j['description'] as String?,
       );
 }
 
@@ -256,7 +272,25 @@ class GameState {
 class CatchResult {
   const CatchResult(this.species, this.points);
   final Species species;
+
+  /// Sell value of the caught creature — catching itself awards no points.
   final int points;
+}
+
+enum SellFailure { invalidCount, notEnoughCreatures, unknownSpecies }
+
+class SellException implements Exception {
+  const SellException(this.failure);
+  final SellFailure failure;
+
+  @override
+  String toString() => 'SellException(${failure.name})';
+}
+
+class SellResult {
+  const SellResult(this.state, this.earned);
+  final GameState state;
+  final int earned;
 }
 
 /// Pure game rules, independent of Riverpod and storage.
@@ -273,11 +307,24 @@ class GameRules {
     final species = pool[random.nextInt(pool.length)];
     final caught = Map<String, int>.of(state.caught)
       ..update(species.id, (c) => c + 1, ifAbsent: () => 1);
-    final pts = species.rarity.points;
-    return (
-      state.copyWith(points: state.points + pts, caught: caught),
-      CatchResult(species, pts),
-    );
+    return (state.copyWith(caught: caught), CatchResult(species, species.sellValue));
+  }
+
+  /// Sells [count] creatures of [speciesId]; throws [SellException].
+  SellResult sell(GameState state, String speciesId, int count) {
+    final species = catalog.speciesById(speciesId);
+    if (species == null) throw const SellException(SellFailure.unknownSpecies);
+    if (count < 1) throw const SellException(SellFailure.invalidCount);
+    final owned = state.caught[speciesId] ?? 0;
+    if (count > owned) throw const SellException(SellFailure.notEnoughCreatures);
+    final caught = Map<String, int>.of(state.caught);
+    if (owned == count) {
+      caught.remove(speciesId);
+    } else {
+      caught[speciesId] = owned - count;
+    }
+    final earned = species.sellValue * count;
+    return SellResult(state.copyWith(points: state.points + earned, caught: caught), earned);
   }
 
   /// Returns null when not enough points or offer unverified.

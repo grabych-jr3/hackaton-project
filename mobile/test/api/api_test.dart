@@ -209,8 +209,9 @@ void main() {
             'rarity': species.rarity.name,
           },
           'points': 25,
+          'awarded': 0,
           'state': {
-            'points': 125,
+            'points': 100,
             'caught': {species.id: 1},
             'vouchers': [],
           },
@@ -221,7 +222,7 @@ void main() {
           const BarrierReport(placeId: 'p1', steps: 2, curb: CurbRange.high));
       expect(result.species.id, species.id);
       expect(result.points, 25);
-      expect(state.points, 125);
+      expect(state.points, 100);
       expect(sent['placeId'], 'p1');
       expect(sent['report']['curb'], 'high');
       expect(sent['report']['steps'], 2);
@@ -262,7 +263,40 @@ void main() {
       final repo = repoWith((_) async => throw const SocketException('down'));
       final (state, result) = await repo.submitReport(
           catalog, const GameState(points: 0), const BarrierReport(steps: 1));
-      expect(state.points, result.points);
+      expect(state.points, 0);
+      expect(result.points, result.species.sellValue);
+    });
+
+    test('sell success', () async {
+      late http.Request sent;
+      final repo = repoWith((req) async {
+        sent = req;
+        return _json({
+          'earned': 50,
+          'state': {'points': 150, 'caught': {'sowa': 1}, 'vouchers': []},
+        });
+      });
+      final r = await repo.sell(
+          catalog, const GameState(points: 100, caught: {'sowa': 3}), 'sowa', 2);
+      expect(sent.url.path, endsWith('/game/sell'));
+      expect(sent.method, 'POST');
+      expect(jsonDecode(sent.body), {'speciesId': 'sowa', 'count': 2});
+      expect(r.earned, 50);
+      expect(r.state.points, 150);
+      expect(r.state.caught['sowa'], 1);
+    });
+
+    test('sell 409 NOT_ENOUGH_CREATURES and 400 INVALID_COUNT', () async {
+      final short = repoWith((_) async => _json({'code': 'NOT_ENOUGH_CREATURES'}, 409));
+      await expectLater(
+          short.sell(catalog, const GameState(points: 0), 'sowa', 5),
+          throwsA(isA<SellException>()
+              .having((e) => e.failure, 'failure', SellFailure.notEnoughCreatures)));
+      final bad = repoWith((_) async => _json({'code': 'INVALID_COUNT'}, 400));
+      await expectLater(
+          bad.sell(catalog, const GameState(points: 0), 'sowa', 0),
+          throwsA(isA<SellException>()
+              .having((e) => e.failure, 'failure', SellFailure.invalidCount)));
     });
   });
 }
