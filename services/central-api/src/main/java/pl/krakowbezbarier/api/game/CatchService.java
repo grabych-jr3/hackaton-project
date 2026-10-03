@@ -30,25 +30,25 @@ import java.util.*;
 @Service
 public class CatchService {
     private static final Logger log = LoggerFactory.getLogger(CatchService.class);
-    static final long MAX_PHOTO_BYTES = 3L * 1024 * 1024;
+    static final long MAX_PHOTO_BYTES = 5L * 1024 * 1024;
+    public static final String REASON_DUPLICATE = "To miejsce zostało już sfotografowane";
     static final int DAILY_LIMIT = 30;
     static final double MAX_SPAWN_DISTANCE_M = 50;
     static final Duration MAX_PHOTO_AGE = Duration.ofMinutes(10);
-    static final Map<String, Integer> RARITY_POINTS = Map.of("common", 10, "rare", 25, "epic", 60, "legendary", 150);
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper om;
     private final PhotoSubmittedProducer producer;
-    private final PointsService points;
+    private final GameService game;
     private final PlaceRepository places;
     private final Path photosDir;
 
-    public CatchService(JdbcTemplate jdbc, ObjectMapper om, PhotoSubmittedProducer producer, PointsService points,
+    public CatchService(JdbcTemplate jdbc, ObjectMapper om, PhotoSubmittedProducer producer, GameService game,
                         PlaceRepository places, @Value("${app.photos-dir:./photos}") String photosDir) {
         this.jdbc = jdbc;
         this.om = om;
         this.producer = producer;
-        this.points = points;
+        this.game = game;
         this.places = places;
         this.photosDir = Paths.get(photosDir).toAbsolutePath();
     }
@@ -58,9 +58,12 @@ public class CatchService {
     public SubmitResult submit(UUID userId, MultipartFile photo, double lat, double lng, UUID spawnId,
                                String placeId, Instant takenAt) throws IOException {
         if (photo == null || photo.isEmpty()) throw ApiException.badRequest("photo is required");
-        if (photo.getSize() > MAX_PHOTO_BYTES) throw ApiException.badRequest("photo must be at most 3 MB");
-        String ct = photo.getContentType();
-        if (ct != null && !ct.startsWith("image/")) throw ApiException.badRequest("photo must be an image");
+        if (photo.getSize() > MAX_PHOTO_BYTES) {
+            throw new ApiException(HttpStatus.PAYLOAD_TOO_LARGE, "PAYLOAD_TOO_LARGE", "Photo must be at most 5 MB");
+        }
+        String ext = imageExtension(photo.getBytes());
+        if (ext == null) throw ApiException.badRequest("photo must be a JPEG or PNG image");
+        if (takenAt == null) throw ApiException.badRequest("takenAt is required");
         if (lat < -90 || lat > 90 || lng < -180 || lng > 180) throw ApiException.badRequest("invalid lat/lng");
         Instant now = Instant.now();
         if (takenAt.isBefore(now.minus(MAX_PHOTO_AGE)) || takenAt.isAfter(now.plus(Duration.ofMinutes(2)))) {
@@ -89,7 +92,7 @@ public class CatchService {
         LocalDate d = LocalDate.now(ZoneOffset.UTC);
         Path dir = photosDir.resolve(String.format("%04d/%02d/%02d", d.getYear(), d.getMonthValue(), d.getDayOfMonth()));
         Files.createDirectories(dir);
-        Path file = dir.resolve(id + ".jpg");
+        Path file = dir.resolve(id + ext);
         photo.transferTo(file);
         String photoPath = file.toString().replace('\\', '/');
 
@@ -140,6 +143,14 @@ public class CatchService {
         }
 
         JsonNode result = ev.result() == null ? JsonNodeFactory.instance.objectNode() : ev.result();
+        double lng = ((Number) c.get("lng")).doubleValue();
+        double lat = ((Number) c.get("lat")).doubleValue();
+        if (isDuplicate(catchId, ev.phash(), lng, lat)) {
+            jdbc.update("UPDATE catch_record SET status = 'REJECTED', reason = ?, ai_result = ?::jsonb, phash = ?, analyzed_at = now() WHERE id = ?",
+                    REASON_DUPLICATE, json(result), ev.phash(), catchId);
+            return;
+        }
+
         Double confidence = result.hasNonNull("confidence") ? result.get("confidence").asDouble() : null;
         String placeId = (String) c.get("place_id");
         List<String> created = new ArrayList<>();
@@ -151,24 +162,46 @@ public class CatchService {
             addAiFact(created, placeId, "ramp", result.get("ramp"), ref, now);
         }
 
-        String rarity = c.get("rarity") == null ? "common" : (String) c.get("rarity");
-        int pts = pointsFor(rarity, confidence);
+        // Same rules as POST /game/reports: severity -> rarity -> species. Catching never awards points.
         UUID userId = (UUID) c.get("user_id");
-        String reason = null;
-        if (isDuplicate(catchId, ev.phash(), ((Number) c.get("lng")).doubleValue(), ((Number) c.get("lat")).doubleValue())) {
-            pts = 0;
-            reason = "duplicate";
-        }
-        if (pts > 0) points.award(userId, pts, "catch", catchId.toString());
+        GameRules.Species species = game.rollSpecies(reportFromAi(placeId, result));
+        game.addCreature(userId, species.id());
 
         jdbc.update("""
-                UPDATE catch_record SET status = 'OK', ai_result = ?::jsonb, ai_confidence = ?, phash = ?, points = ?,
-                  created_facts = ?::jsonb, reason = ?, analyzed_at = now() WHERE id = ?""",
-                json(result), confidence, ev.phash(), pts, json(om.valueToTree(created)), reason, catchId);
+                UPDATE catch_record SET status = 'OK', ai_result = ?::jsonb, ai_confidence = ?, phash = ?, points = 0,
+                  species_id = ?, created_facts = ?::jsonb, reason = NULL, analyzed_at = now() WHERE id = ?""",
+                json(result), confidence, ev.phash(), species.id(), json(om.valueToTree(created)), catchId);
         jdbc.update("""
                 UPDATE grid_cell SET explored_count = explored_count + 1
-                WHERE ST_Contains(geom, ST_SetSRID(ST_MakePoint(?, ?), 4326))""",
-                ((Number) c.get("lng")).doubleValue(), ((Number) c.get("lat")).doubleValue());
+                WHERE ST_Contains(geom, ST_SetSRID(ST_MakePoint(?, ?), 4326))""", lng, lat);
+    }
+
+    /** AI result -> BarrierReport, so photo catches use exactly the survey severity rules. */
+    static GameRules.BarrierReport reportFromAi(String placeId, JsonNode r) {
+        Integer steps = r.hasNonNull("steps") && r.get("steps").canConvertToInt() ? Math.max(0, r.get("steps").asInt()) : null;
+        GameRules.CurbRange curb = switch (r.path("kerbRange").asText("")) {
+            case "0-3" -> GameRules.CurbRange.low;
+            case "3-7" -> GameRules.CurbRange.mid;
+            case ">7" -> GameRules.CurbRange.high;
+            default -> GameRules.CurbRange.none;
+        };
+        GameRules.PassageWidth passage = switch (r.path("widthRange").asText("")) {
+            case "<70" -> GameRules.PassageWidth.narrow;
+            case "70-90" -> GameRules.PassageWidth.medium;
+            case ">90" -> GameRules.PassageWidth.wide;
+            default -> GameRules.PassageWidth.none;
+        };
+        boolean noRamp = r.has("ramp") && r.get("ramp").isBoolean() && !r.get("ramp").asBoolean();
+        JsonNode obs = r.path("obstacles");
+        boolean obstacles = obs.isArray() && obs.size() > 0;
+        boolean uneven = r.path("difficulty").asDouble(0) >= 6;
+        return new GameRules.BarrierReport(placeId, steps, curb, passage, noRamp, uneven, obstacles);
+    }
+
+    static String imageExtension(byte[] b) {
+        if (b.length >= 3 && (b[0] & 0xFF) == 0xFF && (b[1] & 0xFF) == 0xD8 && (b[2] & 0xFF) == 0xFF) return ".jpg";
+        if (b.length >= 8 && (b[0] & 0xFF) == 0x89 && b[1] == 'P' && b[2] == 'N' && b[3] == 'G') return ".png";
+        return null;
     }
 
     /** Same barrier photographed again: pHash Hamming distance <= 6 within 30 m. */
@@ -194,11 +227,6 @@ public class CatchService {
         }
     }
 
-    static int pointsFor(String rarity, Double confidence) {
-        int base = RARITY_POINTS.getOrDefault(rarity, 10);
-        return confidence != null && confidence < 0.5 ? base / 2 : base;
-    }
-
     private void addAiFact(List<String> created, String placeId, String feature, JsonNode value, String ref, Instant now) {
         if (value == null || value.isNull()) return;
         try {
@@ -216,21 +244,23 @@ public class CatchService {
 
     public Map<String, Object> get(UUID catchId, UUID userId) {
         List<Map<String, Object>> rows = jdbc.queryForList("""
-                SELECT c.id, c.status, c.points, c.reason, c.ai_result::text AS ai_result,
-                       c.created_facts::text AS created_facts, COALESCE(s.rarity, 'common') AS rarity
-                FROM catch_record c LEFT JOIN creature_spawn s ON s.id = c.spawn_id
-                WHERE c.id = ? AND c.user_id = ?""", catchId, userId);
+                SELECT id, status, reason, species_id, ai_result::text AS ai_result, created_facts::text AS created_facts
+                FROM catch_record WHERE id = ? AND user_id = ?""", catchId, userId);
         if (rows.isEmpty()) throw ApiException.notFound("Catch " + catchId + " not found");
         Map<String, Object> r = rows.get(0);
+        Optional<GameRules.Species> species = game.species((String) r.get("species_id"));
+        boolean ok = "OK".equals(r.get("status"));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("catchId", r.get("id").toString());
         out.put("status", r.get("status"));
-        out.put("points", r.get("points"));
-        out.put("rarity", r.get("rarity"));
+        out.put("reason", r.get("reason"));
         out.put("result", readTree((String) r.get("ai_result")));
+        out.put("species", species.orElse(null));
+        out.put("points", species.map(s -> s.rarity().sellValue()).orElse(null));
+        out.put("awarded", 0);
+        out.put("state", ok ? game.state(userId) : null);
         JsonNode facts = readTree((String) r.get("created_facts"));
         out.put("createdFacts", facts == null ? List.of() : facts);
-        out.put("reason", r.get("reason"));
         return out;
     }
 

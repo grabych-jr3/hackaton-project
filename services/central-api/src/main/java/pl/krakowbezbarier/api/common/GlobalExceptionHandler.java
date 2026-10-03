@@ -39,7 +39,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     ResponseEntity<ApiError> tooLarge(Exception e) {
-        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(new ApiError("PAYLOAD_TOO_LARGE", "Photo must be at most 3 MB"));
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(new ApiError("PAYLOAD_TOO_LARGE", "Photo must be at most 5 MB"));
     }
 
     @ExceptionHandler(DuplicateKeyException.class)
