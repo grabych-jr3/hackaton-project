@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    environment: { POSTGRES_DB: kbb, POSTGRES_USER: kbb, POSTGRES_PASSWORD: kbb }
+    ports: ["5432:5432"]
+    volumes: [dbdata:/var/lib/postgresql/data]
+
+  redpanda:
+    image: redpandadata/redpanda:latest
+    command: >
+      redpanda start --mode dev-container --smp 1 --memory 512M
+      --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+    ports: ["19092:19092"]
+
+  central-api:
+    build: ./services/central-api
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/kbb
+      SPRING_DATASOURCE_USERNAME: kbb
+      SPRING_DATASOURCE_PASSWORD: kbb
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: redpanda:9092
+      ORS_API_KEY: ${ORS_API_KEY:-}
+      JWT_SECRET: ${JWT_SECRET:-}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      PHOTOS_DIR: /photos
+    ports: ["8080:8080"]
+    volumes: [photos:/photos]
+    depends_on: [db, redpanda]
+    restart: on-failure
+
+  vision-service:
+    build: ./services/vision-service
+    environment:
+      KAFKA_BOOTSTRAP: redpanda:9092
+      KAFKA_ENABLED: ${KAFKA_ENABLED:-true}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
+      PHOTOS_DIR: /photos
+    ports: ["8000:8000"]
+    volumes: [photos:/photos]
+    depends_on: [redpanda]
+
+volumes: { dbdata: {}, photos: {} }
