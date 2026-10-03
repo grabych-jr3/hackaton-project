@@ -48,7 +48,7 @@ void main() {
     await tester.tap(find.text('Dalej'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Lista'), findsOneWidget);
+    expect(find.byTooltip('Lista miejsc'), findsOneWidget);
     final saved = await ProfileRepository().load();
     expect(saved?.preset, ProfilePreset.stroller);
   });
@@ -70,7 +70,12 @@ void main() {
     await pumpApp(tester);
 
     await openList(tester);
-    await tester.tap(find.text('Zamek Królewski na Wawelu'));
+    // List is sorted by distance; reach Wawel via search instead of scrolling.
+    await tester.enterText(find.byType(TextField), 'Zamek Królewski');
+    await tester.pumpAndSettle();
+    await tester.tap(find
+        .descendant(of: find.byType(Card), matching: find.text('Zamek Królewski na Wawelu'))
+        .last);
     await tester.pumpAndSettle();
 
     expect(find.text('Częściowo pasuje'), findsOneWidget);
@@ -100,7 +105,7 @@ class _FilePlacesRepository implements PlacesRepository {
 }
 
 Future<void> openList(WidgetTester tester) async {
-  await tester.tap(find.text('Lista'));
+  await tester.tap(find.byTooltip('Lista miejsc'));
   await tester.pumpAndSettle();
 }
 

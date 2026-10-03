@@ -15,6 +15,7 @@ class PlacesList extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final origin = ref.watch(distanceOriginProvider);
     return ref.watch(filteredPlacesProvider).when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (e, _) =>
@@ -32,11 +33,25 @@ class PlacesList extends ConsumerWidget {
             separatorBuilder: (_, _) => const SizedBox(height: 10),
             itemBuilder: (context, i) {
               if (i == 0) {
-                return places.any((p) => p.isDemo)
-                    ? const Align(alignment: Alignment.centerLeft, child: DemoBadge())
-                    : const SizedBox.shrink();
+                return Row(
+                  children: [
+                    Expanded(
+                      child: Semantics(
+                        header: true,
+                        child: Text(origin.label,
+                            style: Theme.of(context).textTheme.titleSmall
+                                ?.copyWith(fontWeight: FontWeight.w700)),
+                      ),
+                    ),
+                    if (places.any((p) => p.isDemo)) const DemoBadge(),
+                  ],
+                );
               }
-              return _PlaceTile(place: places[i - 1]);
+              final place = places[i - 1];
+              return _PlaceTile(
+                place: place,
+                distance: formatDistance(distanceToPlace(origin.point, place)),
+              );
             },
           ),
         );
@@ -44,9 +59,10 @@ class PlacesList extends ConsumerWidget {
 }
 
 class _PlaceTile extends ConsumerWidget {
-  const _PlaceTile({required this.place});
+  const _PlaceTile({required this.place, required this.distance});
 
   final Place place;
+  final String distance;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -86,6 +102,10 @@ class _PlaceTile extends ConsumerWidget {
                   ],
                 ),
               ),
+              const SizedBox(width: 8),
+              Text(distance,
+                  style: text.bodySmall?.copyWith(
+                      color: AppColors.textMuted, fontWeight: FontWeight.w600)),
               const Icon(Icons.chevron_right, color: AppColors.textMuted),
             ],
           ),
