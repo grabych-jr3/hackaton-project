@@ -85,6 +85,15 @@ class GameNotifier extends AsyncNotifier<GameState> {
     state = AsyncData(next);
     return true;
   }
+
+  /// Returns points earned; throws [SellException].
+  Future<int> sell(String speciesId, int count) async {
+    final current = state.value;
+    if (current == null) throw const SellException(SellFailure.invalidCount);
+    final result = await _repo.sell(_catalog, current, speciesId, count);
+    state = AsyncData(result.state);
+    return result.earned;
+  }
 }
 
 final gameProvider = AsyncNotifierProvider<GameNotifier, GameState>(GameNotifier.new);

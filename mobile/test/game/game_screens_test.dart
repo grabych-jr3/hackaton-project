@@ -55,7 +55,7 @@ void main() {
   setUpAll(() => GoogleFonts.config.allowRuntimeFetching = false);
   setUp(() => now = DateTime(2026, 10, 3, 12));
 
-  testWidgets('catch: survey catches a creature and adds points', (tester) async {
+  testWidgets('catch: survey catches a creature without adding points', (tester) async {
     SharedPreferences.setMockInitialValues({});
     await pumpScreen(tester, const CatchScreen());
 
@@ -75,9 +75,10 @@ void main() {
 
     expect(find.textContaining('Złapano:'), findsOneWidget);
     expect(find.textContaining('Zgłoszenie niezweryfikowane'), findsOneWidget);
-    await tester.tap(find.text('Odbierz punkty'));
+    expect(find.textContaining('sprzedaj w Kolekcji'), findsOneWidget);
+    await tester.tap(find.text('Do kolekcji'));
     await tester.pumpAndSettle();
-    expect(find.text('Saldo: 120 pkt'), findsNothing);
+    expect(find.textContaining('Złapano:'), findsNothing);
   });
 
   testWidgets('collection: locked and caught species, city progress', (tester) async {
@@ -92,6 +93,50 @@ void main() {
     expect(find.text('Odkryto 1/8'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('Nowa Huta'), 200, scrollable: find.byType(Scrollable).first);
     expect(find.text('Odkryte miasto'), findsOneWidget);
+  });
+
+  testWidgets('collection: sell sheet changes quantity and updates balance', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'game_state':
+          jsonEncode(const GameState(points: 10, caught: {'sowa': 3}).toJson()),
+    });
+    await pumpScreen(tester, const CollectionScreen());
+
+    expect(find.text('Saldo: 10 pkt'), findsOneWidget);
+    expect(find.text('Sprzedaj · 25 pkt'), findsOneWidget);
+    expect(find.bySemanticsLabel('Sowa, rzadki, posiadasz 3, wartość 25 punktów'),
+        findsOneWidget);
+
+    await tester.tap(find.text('Sowa'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sprzedaj (1) za 25 pkt'), findsOneWidget);
+    expect(find.textContaining('Collegium Maius'), findsOneWidget);
+    await tester.tap(find.byTooltip('Zwiększ liczbę'));
+    await tester.pump();
+    expect(find.text('Sprzedaj (2) za 50 pkt'), findsOneWidget);
+    await tester.tap(find.byTooltip('Zwiększ liczbę'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Zmniejsz liczbę'));
+    await tester.pump();
+
+    await tester.tap(find.text('Sprzedaj (2) za 50 pkt'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Potwierdź'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sprzedano 2 × Sowa za 50 pkt'), findsOneWidget);
+    expect(find.text('Saldo: 60 pkt'), findsOneWidget);
+    expect(find.text('×1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('collection: locked species are not sellable', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await pumpScreen(tester, const CollectionScreen());
+    expect(find.textContaining('Sprzedaj'), findsNothing);
+    await tester.tap(find.text('???').first);
+    await tester.pumpAndSettle();
+    expect(find.byType(BottomSheet), findsNothing);
   });
 
   testWidgets('rewards: activate voucher, countdown, expiry', (tester) async {

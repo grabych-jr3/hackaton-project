@@ -17,6 +17,9 @@ abstract interface class GameRepository {
   /// Returns null when not enough points or the offer is not verified.
   Future<GameState?> activate(
       GameCatalog catalog, GameState state, VoucherOffer offer, DateTime now);
+
+  /// Throws [SellException] on invalid count / not enough creatures.
+  Future<SellResult> sell(GameCatalog catalog, GameState state, String speciesId, int count);
 }
 
 /// Original offline logic: [GameRules] + shared_preferences.
@@ -54,6 +57,14 @@ class LocalGameRepository implements GameRepository {
     final next = GameRules(catalog, random).activate(state, offer, now);
     if (next != null) await _save(next);
     return next;
+  }
+
+  @override
+  Future<SellResult> sell(
+      GameCatalog catalog, GameState state, String speciesId, int count) async {
+    final result = GameRules(catalog, random).sell(state, speciesId, count);
+    await _save(result.state);
+    return result;
   }
 }
 
@@ -93,7 +104,7 @@ class ApiGameRepository implements GameRepository {
         ? (catalog.speciesById(rawSpecies['id'] as String) ??
             Species.fromJson(rawSpecies))
         : catalog.speciesById(rawSpecies as String)!;
-    final points = json['points'] as int? ?? species.rarity.points;
+    final points = (json['points'] as num?)?.toInt() ?? species.sellValue;
     return (
       GameState.fromJson(json['state'] as Map<String, dynamic>),
       CatchResult(species, points),
@@ -114,5 +125,30 @@ class ApiGameRepository implements GameRepository {
     } catch (_) {
       return local.activate(catalog, state, offer, now);
     }
+  }
+
+  @override
+  Future<SellResult> sell(
+      GameCatalog catalog, GameState state, String speciesId, int count) async {
+    final Map<String, dynamic> json;
+    try {
+      json = await _api.post('/game/sell',
+          body: {'speciesId': speciesId, 'count': count}, auth: true) as Map<String, dynamic>;
+    } on ApiException catch (e) {
+      if (e.status == 400 || e.code == 'INVALID_COUNT') {
+        throw const SellException(SellFailure.invalidCount);
+      }
+      if (e.status == 409 || e.code == 'NOT_ENOUGH_CREATURES') {
+        throw const SellException(SellFailure.notEnoughCreatures);
+      }
+      rethrow;
+    } catch (e) {
+      if (!isNetworkError(e)) rethrow;
+      return local.sell(catalog, state, speciesId, count);
+    }
+    return SellResult(
+      GameState.fromJson(json['state'] as Map<String, dynamic>),
+      (json['earned'] as num?)?.toInt() ?? 0,
+    );
   }
 }
