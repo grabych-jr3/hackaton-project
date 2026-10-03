@@ -1,17 +1,30 @@
-# hackaton_project
+# Kraków bez barier
 
-A new Flutter project.
+Платформа доступных и разгруженных туристических маршрутов для людей на инвалидных и детских колясках.
+Полное ТЗ — [docs/TZ.md](docs/TZ.md).
 
-## Getting Started
+## Структура (монорепо)
+```
+mobile/                    Flutter-приложение (Android / Web)
+services/central-api/      Java · Spring Boot · PostGIS — центральный API
+services/vision-service/   Python · FastAPI · OpenCV · Gemini — анализ фото
+docs/                      ТЗ, правила хакатона, набросок интерфейса
+```
 
-This project is a starting point for a Flutter application.
+## Архитектура
+```
+Flutter ──REST──► central-api (Java, PostGIS) ──topic photo.submitted──► vision-service (Python)
+                        ▲                                                    │
+                        └──────────── topic photo.analyzed ◄─────────────────┘
+```
+Брокер сообщений — Redpanda (совместим с Kafka API). В событиях передаётся ссылка на фото, а не сами байты.
 
-A few resources to get you started if this is your first Flutter project:
+## Запуск мобильного приложения
+```
+cd mobile
+flutter pub get
+flutter run -d chrome
+```
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Данные
+© OpenStreetMap contributors (ODbL).
