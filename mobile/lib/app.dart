@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'core/theme/app_theme.dart';
 import 'core/widgets/phone_frame.dart';
+import 'data/repositories/profile_repository.dart';
 import 'features/catch/catch_screen.dart';
 import 'features/collection/collection_screen.dart';
 import 'features/map/map_screen.dart';
+import 'features/onboarding/onboarding_screen.dart';
 import 'features/profile/profile_screen.dart';
 import 'features/rewards/rewards_screen.dart';
 import 'features/shell/home_shell.dart';
@@ -41,7 +44,25 @@ class KrakowBezBarierApp extends StatelessWidget {
       theme: AppTheme.light(),
       themeMode: ThemeMode.light,
       routerConfig: _router,
-      builder: (context, child) => PhoneFrame(child: child!),
+      builder: (context, child) => PhoneFrame(child: _ProfileGate(child: child!)),
     );
+  }
+}
+
+/// Shows onboarding until the user picks a needs profile.
+class _ProfileGate extends ConsumerWidget {
+  const _ProfileGate({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return ref.watch(profileProvider).when(
+          data: (profile) => profile == null ? const OnboardingScreen() : child,
+          loading: () => const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          ),
+          error: (_, _) => const OnboardingScreen(),
+        );
   }
 }
