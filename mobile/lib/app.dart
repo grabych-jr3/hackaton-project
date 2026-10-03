@@ -9,11 +9,12 @@ import 'features/catch/catch_screen.dart';
 import 'features/collection/collection_screen.dart';
 import 'features/map/map_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
+import 'features/place/place_detail_screen.dart';
 import 'features/profile/profile_screen.dart';
 import 'features/rewards/rewards_screen.dart';
 import 'features/shell/home_shell.dart';
 
-final _router = GoRouter(
+GoRouter _buildRouter() => GoRouter(
   initialLocation: '/map',
   routes: [
     StatefulShellRoute.indexedStack(
@@ -26,6 +27,11 @@ final _router = GoRouter(
         _branch('/profile', const ProfileScreen()),
       ],
     ),
+    GoRoute(
+      path: '/place/:id',
+      builder: (context, state) =>
+          PlaceDetailScreen(placeId: state.pathParameters['id']!),
+    ),
   ],
 );
 
@@ -33,8 +39,15 @@ StatefulShellBranch _branch(String path, Widget screen) => StatefulShellBranch(
       routes: [GoRoute(path: path, builder: (context, state) => screen)],
     );
 
-class KrakowBezBarierApp extends StatelessWidget {
+class KrakowBezBarierApp extends StatefulWidget {
   const KrakowBezBarierApp({super.key});
+
+  @override
+  State<KrakowBezBarierApp> createState() => _KrakowBezBarierAppState();
+}
+
+class _KrakowBezBarierAppState extends State<KrakowBezBarierApp> {
+  late final _router = _buildRouter();
 
   @override
   Widget build(BuildContext context) {
