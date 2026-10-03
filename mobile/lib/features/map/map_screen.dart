@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 
@@ -26,6 +27,44 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   final _mapController = MapController();
   bool _showList = false;
   Place? _selected;
+  _MapStyle _style = _MapStyle.streets;
+  LatLng? _myLocation;
+  bool _locating = false;
+
+  Future<void> _locate() async {
+    final messenger = ScaffoldMessenger.of(context);
+    void fail(String msg) =>
+        messenger.showSnackBar(SnackBar(content: Text(msg)));
+
+    setState(() => _locating = true);
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        return fail('Włącz lokalizację w urządzeniu.');
+      }
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return fail('Brak zgody na lokalizację.');
+      }
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 15),
+        ),
+      );
+      final here = LatLng(pos.latitude, pos.longitude);
+      if (!mounted) return;
+      setState(() => _myLocation = here);
+      _mapController.move(here, 16);
+    } catch (_) {
+      fail('Nie udało się ustalić lokalizacji.');
+    } finally {
+      if (mounted) setState(() => _locating = false);
+    }
+  }
 
   void _select(Place place) {
     setState(() => _selected = place);
@@ -59,9 +98,49 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     children: [
                       _PlacesMap(
                         controller: _mapController,
+                        style: _style,
+                        myLocation: _myLocation,
                         selected: _selected,
                         onSelect: _select,
                         onTapMap: () => setState(() => _selected = null),
+                      ),
+                      Positioned(
+                        top: 12,
+                        right: 12,
+                        child: Column(
+                          children: [
+                            FloatingActionButton.small(
+                              heroTag: 'layers',
+                              backgroundColor: AppColors.background,
+                              foregroundColor: AppColors.primary,
+                              tooltip: _style == _MapStyle.streets
+                                  ? 'Widok satelitarny'
+                                  : 'Widok mapy',
+                              onPressed: () => setState(() => _style =
+                                  _style == _MapStyle.streets
+                                      ? _MapStyle.satellite
+                                      : _MapStyle.streets),
+                              child: Icon(_style == _MapStyle.streets
+                                  ? Icons.satellite_alt_outlined
+                                  : Icons.map_outlined),
+                            ),
+                            const SizedBox(height: 8),
+                            FloatingActionButton.small(
+                              heroTag: 'locate',
+                              backgroundColor: AppColors.background,
+                              foregroundColor: AppColors.primary,
+                              tooltip: 'Moja lokalizacja',
+                              onPressed: _locating ? null : _locate,
+                              child: _locating
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    )
+                                  : const Icon(Icons.my_location),
+                            ),
+                          ],
+                        ),
                       ),
                       if (_selected != null)
                         Positioned(
@@ -156,12 +235,16 @@ class _SearchAndFilters extends ConsumerWidget {
 class _PlacesMap extends ConsumerWidget {
   const _PlacesMap({
     required this.controller,
+    required this.style,
+    required this.myLocation,
     required this.selected,
     required this.onSelect,
     required this.onTapMap,
   });
 
   final MapController controller;
+  final _MapStyle style;
+  final LatLng? myLocation;
   final Place? selected;
   final ValueChanged<Place> onSelect;
   final VoidCallback onTapMap;
@@ -181,14 +264,34 @@ class _PlacesMap extends ConsumerWidget {
       ),
       children: [
         TileLayer(
-          // Stadia Alidade Smooth: OSM data, light style. Free on localhost;
-          // a deployed domain must be registered at stadiamaps.com (no key in code).
-          urlTemplate:
-              'https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}{r}.png',
-          retinaMode: RetinaMode.isHighDensity(context),
+          key: ValueKey(style),
+          urlTemplate: style.urlTemplate,
+          retinaMode: style.retina && RetinaMode.isHighDensity(context),
+          maxNativeZoom: style.maxNativeZoom,
           userAgentPackageName: 'pl.krakowbezbarier.app',
           tileProvider: kIsWeb ? _PlainWebTileProvider() : NetworkTileProvider(),
         ),
+        if (myLocation != null)
+          MarkerLayer(markers: [
+            Marker(
+              point: myLocation!,
+              width: 28,
+              height: 28,
+              child: Semantics(
+                label: 'Twoja lokalizacja',
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1A73E8),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 4),
+                    boxShadow: const [
+                      BoxShadow(color: Color(0x551A73E8), blurRadius: 12, spreadRadius: 4),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ]),
         MarkerLayer(
           markers: [
             for (final place in places)
@@ -204,12 +307,10 @@ class _PlacesMap extends ConsumerWidget {
               ),
           ],
         ),
-        const RichAttributionWidget(
+        RichAttributionWidget(
           alignment: AttributionAlignment.bottomLeft,
           attributions: [
-            TextSourceAttribution('OpenStreetMap contributors'),
-            TextSourceAttribution('Stadia Maps'),
-            TextSourceAttribution('OpenMapTiles'),
+            for (final a in style.attributions) TextSourceAttribution(a),
           ],
         ),
       ],
@@ -351,4 +452,30 @@ class _PlainWebTileProvider extends TileProvider {
   @override
   ImageProvider getImage(TileCoordinates coordinates, TileLayer options) =>
       NetworkImage(getTileUrl(coordinates, options));
+}
+
+/// Base layers. Streets: Stadia OSM Bright (colored, free on localhost; a
+/// deployed web domain must be registered at stadiamaps.com). Satellite: Esri
+/// World Imagery (attribution required).
+enum _MapStyle {
+  streets(
+    'https://tiles.stadiamaps.com/tiles/osm_bright/{z}/{x}/{y}{r}.png',
+    ['OpenStreetMap contributors', 'Stadia Maps', 'OpenMapTiles'],
+    retina: true,
+    maxNativeZoom: 20,
+  ),
+  satellite(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    ['Esri, Maxar, Earthstar Geographics'],
+    retina: false,
+    maxNativeZoom: 19,
+  );
+
+  const _MapStyle(this.urlTemplate, this.attributions,
+      {required this.retina, required this.maxNativeZoom});
+
+  final String urlTemplate;
+  final List<String> attributions;
+  final bool retina;
+  final int maxNativeZoom;
 }
