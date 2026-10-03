@@ -22,8 +22,8 @@
 | # | Этап | Где | Статус |
 |---|---|---|---|
 | 10 | Overpass-адаптер во Flutter: реальные данные OSM + снимок в assets + баннер «źródło niedostępne» | `mobile/` | ⬜ |
-| 11 | `docker-compose.yml`: PostGIS + Redpanda + заготовки двух сервисов | корень | ⬜ |
-| 12 | central-api: Spring Boot, Flyway, сущности `place` / `accessibility_fact`, импорт Overpass, `/places`, `/places/{id}`, `/facts` | `services/central-api` | ⬜ |
+| 11 | `docker-compose.yml`: PostGIS + Redpanda + заготовки двух сервисов | корень | ✅ |
+| 12 | central-api: Spring Boot, Flyway, сущности `place` / `accessibility_fact`, импорт Overpass, `/places`, `/places/{id}`, `/facts` | `services/central-api` | ✅ |
 | 13 | vision-service: FastAPI + Kafka consumer/producer, OpenCV-предобработка, Gemini → JSON | `services/vision-service` | ✅ |
 | 14 | central-api: `/catches` (202 + опрос), Kafka producer/consumer, очки, спавн и редкость | `services/central-api` | ⬜ |
 | 15 | Толпы: сетка, базовая оценка, опрос «Jak tłoczno?», слой на карте | оба | ⬜ |
