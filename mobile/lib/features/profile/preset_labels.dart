@@ -17,9 +17,9 @@ extension PresetLabels on ProfilePreset {
 
   String get description => switch (this) {
         ProfilePreset.wheelchair =>
-          'Bez schodów, krawężnik do 3 cm, przejście min. 80 cm, dostępna toaleta',
+          'Bez schodów, krawężnik do 3 cm, przejście min. 75 cm, dostępna toaleta',
         ProfilePreset.stroller =>
-          'Do 2 stopni, krawężnik do 6 cm, przejście min. 60 cm',
+          'Do 2 stopni, krawężnik do 6 cm, przejście min. 75 cm',
         ProfilePreset.custom => 'Sam ustawisz progi dla barier',
       };
 

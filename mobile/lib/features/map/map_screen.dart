@@ -1,6 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
@@ -9,6 +10,7 @@ import 'package:latlong2/latlong.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/offline_banner.dart';
+import '../../data/models/accessibility_fact.dart';
 import '../../data/models/place.dart';
 import '../place/place_labels.dart';
 import '../place/place_providers.dart';
@@ -259,13 +261,138 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   }
 }
 
-class _FloatingSearchIsland extends ConsumerWidget {
+class _FloatingSearchIsland extends ConsumerStatefulWidget {
   const _FloatingSearchIsland({required this.onSubmitted});
 
   final ValueChanged<Place>? onSubmitted;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_FloatingSearchIsland> createState() =>
+      _FloatingSearchIslandState();
+}
+
+class _FloatingSearchIslandState extends ConsumerState<_FloatingSearchIsland> {
+  final _controller = TextEditingController();
+  late final _focus = FocusNode(onKeyEvent: _onKey);
+  final _portal = OverlayPortalController();
+  final _link = LayerLink();
+  int _highlight = -1;
+  bool _dismissed = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  bool get _open =>
+      !_dismissed && _controller.text.trim().isNotEmpty && _focus.hasFocus;
+
+  void _sync() {
+    if (_open) {
+      _portal.show();
+    } else {
+      _portal.hide();
+    }
+  }
+
+  void _choose(Place place) {
+    _controller.text = place.name;
+    _controller.selection =
+        TextSelection.collapsed(offset: place.name.length);
+    ref
+        .read(placeFiltersProvider.notifier)
+        .update((f) => f.copyWith(query: place.name));
+    setState(() {
+      _dismissed = true;
+      _highlight = -1;
+    });
+    _sync();
+    widget.onSubmitted?.call(place);
+  }
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    if (!_open) return KeyEventResult.ignored;
+    final items = ref.read(searchSuggestionsProvider);
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.escape) {
+      setState(() => _dismissed = true);
+      _sync();
+      return KeyEventResult.handled;
+    }
+    if (items.isEmpty) return KeyEventResult.ignored;
+    if (key == LogicalKeyboardKey.arrowDown) {
+      setState(() => _highlight = (_highlight + 1) % items.length);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowUp) {
+      setState(() => _highlight =
+          _highlight <= 0 ? items.length - 1 : _highlight - 1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      _choose(items[_highlight.clamp(0, items.length - 1)]);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  Widget _dropdown(BuildContext context, double width) {
+    final items = ref.watch(searchSuggestionsProvider);
+    return CompositedTransformFollower(
+      link: _link,
+      targetAnchor: Alignment.bottomLeft,
+      offset: const Offset(0, 6),
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: SizedBox(
+          width: width,
+          child: Semantics(
+            container: true,
+            explicitChildNodes: true,
+            label: items.isEmpty
+                ? 'Podpowiedzi wyszukiwania: brak wyników'
+                : 'Podpowiedzi wyszukiwania: ${items.length}',
+            child: Material(
+              color: AppColors.surfaceElevated,
+              elevation: 8,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: AppColors.border),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: items.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text('Brak wyników',
+                          style: TextStyle(color: AppColors.textMuted)),
+                    )
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (var i = 0; i < items.length; i++)
+                          _SuggestionRow(
+                            place: items[i],
+                            highlighted: i == _highlight,
+                            onTap: () => _choose(items[i]),
+                          ),
+                      ],
+                    ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final onSubmitted = widget.onSubmitted;
     final filters = ref.watch(placeFiltersProvider);
     final notifier = ref.read(placeFiltersProvider.notifier);
 
@@ -291,6 +418,24 @@ class _FloatingSearchIsland extends ConsumerWidget {
           ),
         );
 
+    return CompositedTransformTarget(
+      link: _link,
+      child: LayoutBuilder(
+        builder: (context, box) => OverlayPortal(
+          controller: _portal,
+          overlayChildBuilder: (context) => _dropdown(context, box.maxWidth),
+          child: _island(filters, chip, notifier, onSubmitted),
+        ),
+      ),
+    );
+  }
+
+  Widget _island(
+    PlaceFilters filters,
+    Widget Function(String, IconData, bool, PlaceFilters Function(PlaceFilters, bool)) chip,
+    PlaceFiltersNotifier notifier,
+    ValueChanged<Place>? onSubmitted,
+  ) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(24),
       child: BackdropFilter(
@@ -319,6 +464,16 @@ class _FloatingSearchIsland extends ConsumerWidget {
                   const SizedBox(width: 10),
                   Expanded(
                     child: TextField(
+                      controller: _controller,
+                      focusNode: _focus,
+                      onTapOutside: (_) {
+                        _focus.unfocus();
+                        _sync();
+                      },
+                      onTap: () {
+                        setState(() => _dismissed = false);
+                        _sync();
+                      },
                       decoration: const InputDecoration(
                         hintText: 'Gdzie chcesz iść? Szukaj w Krakowie...',
                         hintStyle: TextStyle(color: AppColors.textDim, fontSize: 14),
@@ -330,8 +485,20 @@ class _FloatingSearchIsland extends ConsumerWidget {
                       ),
                       style: const TextStyle(fontSize: 14, color: AppColors.text),
                       textInputAction: TextInputAction.search,
-                      onChanged: (q) => notifier.update((f) => f.copyWith(query: q)),
+                      onChanged: (q) {
+                        notifier.update((f) => f.copyWith(query: q));
+                        setState(() {
+                          _dismissed = false;
+                          _highlight = -1;
+                        });
+                        _sync();
+                      },
                       onSubmitted: (_) {
+                        final items = ref.read(searchSuggestionsProvider);
+                        if (items.isNotEmpty) {
+                          _choose(items[_highlight.clamp(0, items.length - 1)]);
+                          return;
+                        }
                         final first = ref.read(filteredPlacesProvider).value?.firstOrNull;
                         if (first != null) onSubmitted?.call(first);
                       },
@@ -388,6 +555,72 @@ class _FloatingSearchIsland extends ConsumerWidget {
                   ],
                 ),
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SuggestionRow extends ConsumerWidget {
+  const _SuggestionRow({
+    required this.place,
+    required this.highlighted,
+    required this.onTap,
+  });
+
+  final Place place;
+  final bool highlighted;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final match = ref.watch(placeMatchProvider(place));
+    final text = Theme.of(context).textTheme;
+    return Semantics(
+      button: true,
+      selected: highlighted,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          color: highlighted ? AppColors.mint100 : null,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              Icon(place.category.icon, color: AppColors.primary, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 3,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(place.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: text.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.text)),
+                    if (place.address != null)
+                      Text(place.address!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: text.bodySmall
+                              ?.copyWith(color: AppColors.textMuted)),
+                  ],
+                ),
+              ),
+              if (match != null) ...[
+                const SizedBox(width: 8),
+                Flexible(
+                  flex: 2,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerRight,
+                    child: StatusChip(match.verdict.style, dense: true),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -675,7 +908,28 @@ class _PlacePreview extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final match = ref.watch(placeMatchProvider(place));
+    final filters = ref.watch(placeFiltersProvider);
     final text = Theme.of(context).textTheme;
+    // Toilet / bench info appears in the preview only when its chip is on
+    // (the full detail screen always shows everything).
+    bool amenityVisible(Feature f) => switch (f) {
+          Feature.toilet => filters.toilet,
+          Feature.bench => filters.benches,
+          _ => true,
+        };
+    final problems = match?.problems
+            .where((c) => amenityVisible(c.feature))
+            .toList() ??
+        const [];
+    bool hasFlag(Feature f) => place.factsFor(f).any((x) => x.flag == true);
+    final amenities = [
+      if (filters.toilet)
+        (Icons.wc_rounded,
+            hasFlag(Feature.toilet) ? 'Toaleta dostępna' : 'Brak danych o toalecie'),
+      if (filters.benches)
+        (Icons.chair_rounded,
+            hasFlag(Feature.bench) ? 'Ławki w pobliżu' : 'Brak danych o ławkach'),
+    ];
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(24),
@@ -749,10 +1003,21 @@ class _PlacePreview extends ConsumerWidget {
                   if (place.isDemo) const DemoBadge(),
                 ],
               ),
-              if (match != null && match.problems.isNotEmpty) ...[
+              for (final (icon, label) in amenities) ...[
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(icon, size: 16, color: AppColors.primary),
+                    const SizedBox(width: 6),
+                    Text(label,
+                        style: text.bodySmall?.copyWith(color: AppColors.text)),
+                  ],
+                ),
+              ],
+              if (problems.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Text(
-                  match.problems
+                  problems
                       .map((c) => '${c.feature.label}: ${c.status.style.label.toLowerCase()}')
                       .join(' · '),
                   style: text.bodySmall?.copyWith(color: AppColors.bad),
@@ -766,6 +1031,7 @@ class _PlacePreview extends ConsumerWidget {
                       onPressed: onRoute,
                       style: OutlinedButton.styleFrom(
                         minimumSize: const Size.fromHeight(48),
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
                         foregroundColor: AppColors.primary,
                         side: const BorderSide(color: AppColors.primary),
                       ),
