@@ -82,6 +82,27 @@ Color _rarityColor(Rarity rarity) => switch (rarity) {
       Rarity.common => AppColors.primary,
     };
 
+/// Luminance (BT.709) grayscale matrix used for sold-out species.
+const List<double> kGrayscaleMatrix = <double>[
+  0.2126, 0.7152, 0.0722, 0, 0, //
+  0.2126, 0.7152, 0.0722, 0, 0, //
+  0.2126, 0.7152, 0.0722, 0, 0, //
+  0, 0, 0, 1, 0,
+];
+
+/// Renders [child] in black-and-white.
+class Grayscale extends StatelessWidget {
+  const Grayscale({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => ColorFiltered(
+        colorFilter: const ColorFilter.matrix(kGrayscaleMatrix),
+        child: child,
+      );
+}
+
 class _PointsBadge extends StatelessWidget {
   const _PointsBadge(this.points);
 
@@ -127,6 +148,8 @@ class _SpeciesTile extends StatelessWidget {
     final theme = Theme.of(context);
     final caught = discovered;
     final canSell = count > 0;
+    final soldOut = caught && !canSell;
+    final vivid = caught && canSell;
     final name = caught ? species.name : '???';
     final rarityColor = _rarityColor(species.rarity);
 
@@ -134,14 +157,16 @@ class _SpeciesTile extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         caught
-            ? Text(species.emoji, style: const TextStyle(fontSize: 34))
+            ? (soldOut
+                ? Grayscale(child: Text(species.emoji, style: const TextStyle(fontSize: 34)))
+                : Text(species.emoji, style: const TextStyle(fontSize: 34)))
             : const Icon(Icons.lock_outline_rounded, size: 34, color: AppColors.textDim),
         const SizedBox(height: 4),
         Text(
           name,
           style: theme.textTheme.titleSmall?.copyWith(
             fontWeight: FontWeight.w700,
-            color: caught ? AppColors.text : AppColors.textMuted,
+            color: vivid ? AppColors.text : AppColors.textMuted,
           ),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
@@ -150,7 +175,7 @@ class _SpeciesTile extends StatelessWidget {
         Text(
           species.rarity.label,
           style: theme.textTheme.labelSmall?.copyWith(
-            color: caught ? rarityColor : AppColors.textDim,
+            color: vivid ? rarityColor : AppColors.textDim,
             fontWeight: FontWeight.w600,
             fontSize: 10,
           ),
@@ -159,7 +184,7 @@ class _SpeciesTile extends StatelessWidget {
           Text(
             canSell ? '×$count' : 'sprzedane',
             style: theme.textTheme.labelMedium?.copyWith(
-              color: AppColors.primary,
+              color: canSell ? AppColors.primary : AppColors.textMuted,
               fontWeight: FontWeight.w800,
             ),
           ),
@@ -168,14 +193,14 @@ class _SpeciesTile extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        color: caught ? AppColors.surfaceElevated : AppColors.surface,
+        color: vivid ? AppColors.surfaceElevated : AppColors.surface,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: caught ? rarityColor.withValues(alpha: 0.8) : AppColors.border,
-          width: caught ? 1.5 : 1.0,
+          color: vivid ? rarityColor.withValues(alpha: 0.8) : AppColors.border,
+          width: vivid ? 1.5 : 1.0,
         ),
         boxShadow: [
-          if (caught)
+          if (vivid)
             BoxShadow(
               color: rarityColor.withValues(alpha: 0.18),
               blurRadius: 10,
@@ -190,7 +215,9 @@ class _SpeciesTile extends StatelessWidget {
             Expanded(
               child: Semantics(
                 button: caught,
-                label: caught
+                label: soldOut
+                    ? '${species.name}, ${species.rarity.label}, sprzedany, brak w kolekcji'
+                    : caught
                     ? '${species.name}, ${species.rarity.label}, posiadasz $count, '
                         'wartość ${species.sellValue} punktów'
                     : 'Nieodkryty stworek, ${species.rarity.label}',
@@ -324,7 +351,7 @@ class _SpeciesSellSheetState extends ConsumerState<SpeciesSellSheet> {
     final owned = ref.watch(gameProvider).value?.caught[s.id] ?? 0;
     final qty = _qty.clamp(1, owned < 1 ? 1 : owned);
     final total = qty * s.sellValue;
-    final color = _rarityColor(s.rarity);
+    final color = owned > 0 ? _rarityColor(s.rarity) : AppColors.textMuted;
 
     return SafeArea(
       child: SingleChildScrollView(
@@ -334,7 +361,12 @@ class _SpeciesSellSheetState extends ConsumerState<SpeciesSellSheet> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             ExcludeSemantics(
-              child: Text(s.emoji, textAlign: TextAlign.center, style: const TextStyle(fontSize: 72)),
+              child: owned > 0
+                  ? Text(s.emoji, textAlign: TextAlign.center, style: const TextStyle(fontSize: 72))
+                  : Grayscale(
+                      child: Text(s.emoji,
+                          textAlign: TextAlign.center, style: const TextStyle(fontSize: 72)),
+                    ),
             ),
             const SizedBox(height: 8),
             Semantics(
@@ -412,7 +444,11 @@ class _SpeciesSellSheetState extends ConsumerState<SpeciesSellSheet> {
                 child: Text('Sprzedaj ($qty) za $total pkt'),
               ),
             ] else
-              const Text('Nie masz już tego stworka.', textAlign: TextAlign.center),
+              const Text(
+                'Nie masz już tego stworka — złap go ponownie',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppColors.textMuted),
+              ),
           ],
         ),
       ),

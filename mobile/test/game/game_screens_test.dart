@@ -139,6 +139,30 @@ void main() {
     expect(find.byType(BottomSheet), findsNothing);
   });
 
+  testWidgets('collection: sold-out species shown in grayscale, owned in color', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'game_state': jsonEncode(
+          const GameState(points: 0, caught: {'smok': 0, 'sowa': 2}).toJson()),
+    });
+    await pumpScreen(tester, const CollectionScreen());
+
+    expect(find.text('sprzedane'), findsOneWidget);
+    final smok = find.ancestor(of: find.text('Smok'), matching: find.byType(Column)).first;
+    expect(find.descendant(of: smok, matching: find.byType(Grayscale)), findsOneWidget);
+    expect(find.descendant(of: smok, matching: find.byType(ColorFiltered)), findsOneWidget);
+    final sowa = find.ancestor(of: find.text('Sowa'), matching: find.byType(Column)).first;
+    expect(find.descendant(of: sowa, matching: find.byType(ColorFiltered)), findsNothing);
+    expect(find.byType(Grayscale), findsOneWidget);
+    expect(find.bySemanticsLabel('Smok, legendarny, sprzedany, brak w kolekcji'), findsOneWidget);
+
+    await tester.tap(find.text('Smok'));
+    await tester.pumpAndSettle();
+    expect(find.text('Nie masz już tego stworka — złap go ponownie'), findsOneWidget);
+    expect(find.descendant(of: find.byType(BottomSheet), matching: find.byType(Grayscale)),
+        findsOneWidget);
+    expect(find.textContaining('Sprzedaj ('), findsNothing);
+  });
+
   testWidgets('rewards: activate voucher, countdown, expiry', (tester) async {
     SharedPreferences.setMockInitialValues({});
     await pumpScreen(tester, const RewardsScreen());
