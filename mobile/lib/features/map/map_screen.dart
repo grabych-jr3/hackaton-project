@@ -18,6 +18,7 @@ import '../place/place_labels.dart';
 import '../place/place_providers.dart';
 import '../place/places_list.dart';
 import '../place/status_chip.dart';
+import '../route/route_layer.dart';
 import '../route/route_panel.dart';
 import '../route/route_service.dart';
 import '../route/route_start.dart';
@@ -808,8 +809,6 @@ class _PlacesMap extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final places = ref.watch(filteredPlacesProvider).value ?? const [];
-    final routePoints =
-        ref.watch(routeProvider).value?.points ?? const <LatLng>[];
     final location = ref.watch(userLocationProvider);
     final myLocation = location?.point;
     final manualStart = ref.watch(manualStartProvider);
@@ -844,27 +843,8 @@ class _PlacesMap extends ConsumerWidget {
           ),
 
         // 2. Planned accessible route (ORS or labelled demo)
-        if (routePoints.length > 1)
-        PolylineLayer(
-          polylines: [
-            // Outer glow line
-            Polyline(
-              points: routePoints,
-              strokeWidth: 8.0,
-              color: AppColors.primary.withValues(alpha: 0.35),
-              strokeCap: StrokeCap.round,
-              strokeJoin: StrokeJoin.round,
-            ),
-            // Inner crisp core line
-            Polyline(
-              points: routePoints,
-              strokeWidth: 3.5,
-              color: AppColors.primaryBright,
-              strokeCap: StrokeCap.round,
-              strokeJoin: StrokeJoin.round,
-            ),
-          ],
-        ),
+        //    walking line, barrier spans in red, or accessible alternative
+        const RouteLayer(),
 
         // 3. User location: accuracy circle + dot
         if (location != null && location.accuracyM > 0)

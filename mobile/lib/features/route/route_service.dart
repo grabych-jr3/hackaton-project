@@ -32,6 +32,50 @@ class RouteSegment {
   final String? warning;
 }
 
+const barrierLabels = {
+  'steps': 'Schody',
+  'steep': 'Stromy odcinek',
+  'surface': 'Nieodpowiednia nawierzchnia',
+  'narrow': 'Wąskie przejście',
+};
+
+/// Part of a route not passable for the user's profile
+/// (indices into [PlannedRoute.points], inclusive).
+class RouteBarrier {
+  const RouteBarrier({
+    required this.fromIndex,
+    required this.toIndex,
+    required this.type,
+    required this.label,
+    this.detail,
+  });
+
+  final int fromIndex;
+  final int toIndex;
+
+  /// steps | steep | surface | narrow
+  final String type;
+  final String label;
+  final String? detail;
+
+  String get text => detail == null ? label : '$label ($detail)';
+
+  static RouteBarrier? fromJson(Object? j) {
+    if (j is! Map) return null;
+    final from = (j['fromIndex'] as num?)?.toInt();
+    final to = (j['toIndex'] as num?)?.toInt();
+    if (from == null || to == null) return null;
+    final type = j['type'] as String? ?? 'steps';
+    return RouteBarrier(
+      fromIndex: from,
+      toIndex: to,
+      type: type,
+      label: j['label'] as String? ?? barrierLabels[type] ?? 'Bariera',
+      detail: j['detail'] as String?,
+    );
+  }
+}
+
 class PlannedRoute {
   const PlannedRoute({
     required this.destination,
@@ -43,6 +87,10 @@ class PlannedRoute {
     required this.isDemo,
     this.fallbackReason,
     this.relaxed = false,
+    this.profile = 'foot-walking',
+    this.barriers = const [],
+    this.accessible = true,
+    this.alternative,
   });
 
   final Place destination;
@@ -59,13 +107,51 @@ class PlannedRoute {
   /// true = found only after relaxing the wheelchair thresholds.
   final bool relaxed;
 
+  /// ORS profile: foot-walking (default route) or wheelchair (alternative).
+  final String profile;
+
+  /// Spans not passable for the user's profile (drawn red on the map).
+  final List<RouteBarrier> barriers;
+
+  /// false = some parts are not passable for the user's profile.
+  final bool accessible;
+
+  /// Wheelchair-accessible alternative (when [accessible] is false).
+  final PlannedRoute? alternative;
+
+  bool get isWheelchair => profile == 'wheelchair';
+
+  String get kindLabel => isWheelchair ? 'Trasa dostępna' : 'Trasa piesza';
+
   String get sourceLabel => isDemo
       ? 'Trasa przykładowa'
-      : 'OpenRouteService · profil wózka';
+      : isWheelchair
+          ? 'OpenRouteService · profil wózka'
+          : 'OpenRouteService · trasa piesza';
+
+  PlannedRoute withAlternative(PlannedRoute? alt) => PlannedRoute(
+        destination: destination,
+        startLabel: startLabel,
+        points: points,
+        distanceM: distanceM,
+        durationS: durationS,
+        segments: segments,
+        isDemo: isDemo,
+        fallbackReason: fallbackReason ??
+            (alt == null
+                ? 'Nie udało się wyznaczyć trasy dostępnej (OpenRouteService)'
+                : null),
+        relaxed: relaxed,
+        profile: profile,
+        barriers: barriers,
+        accessible: accessible,
+        alternative: alt,
+      );
 }
 
-String formatDistance(double m) =>
-    m >= 1000 ? '${(m / 1000).toStringAsFixed(1)} km' : '${m.round()} m';
+String formatDistance(double m) => m >= 1000
+    ? '${(m / 1000).toStringAsFixed(1).replaceAll('.', ',')} km'
+    : '${m.round()} m';
 
 String formatDuration(double s) {
   final min = (s / 60).round();
@@ -100,6 +186,7 @@ class RouteService {
             'maxKerbCm': profile.maxKerbCm,
             'minWidthCm': profile.minWidthCm,
             'maxInclinePct': profile.maxInclinePct,
+            'maxSteps': profile.preset == ProfilePreset.stroller ? 2 : 0,
           },
         });
         return parseApi(json as Map<String, dynamic>,
@@ -112,22 +199,35 @@ class RouteService {
     if (apiKey.isEmpty) {
       return demoRoute(from, startLabel, to, reason: 'Brak klucza OpenRouteService');
     }
+    final PlannedRoute walking;
+    try {
+      walking = await _ors(from, startLabel, to, profile,
+          orsProfile: 'foot-walking', strict: false);
+    } catch (e) {
+      return demoRoute(from, startLabel, to,
+          reason:
+              'OpenRouteService niedostępny (${_msg(e)}) — pokazano trasę przykładową');
+    }
+    if (walking.accessible) return walking;
+    PlannedRoute? alt;
+    try {
+      alt = await _wheelchair(from, startLabel, to, profile);
+    } catch (_) {
+      alt = null;
+    }
+    return walking.withAlternative(alt);
+  }
+
+  /// Wheelchair route: strict thresholds, relaxed retry when ORS finds none.
+  Future<PlannedRoute> _wheelchair(
+      LatLng from, String startLabel, Place to, NeedsProfile profile) async {
     try {
       return await _ors(from, startLabel, to, profile, strict: true);
     } on OrsException catch (e) {
       if (e.retryable) {
-        try {
-          return await _ors(from, startLabel, to, profile, strict: false);
-        } catch (e2) {
-          return demoRoute(from, startLabel, to,
-              reason: 'OpenRouteService: ${_msg(e2)} — pokazano trasę przykładową');
-        }
+        return _ors(from, startLabel, to, profile, strict: false);
       }
-      return demoRoute(from, startLabel, to,
-          reason: 'OpenRouteService: ${e.message} — pokazano trasę przykładową');
-    } catch (e) {
-      return demoRoute(from, startLabel, to,
-          reason: 'OpenRouteService niedostępny (${_msg(e)}) — pokazano trasę przykładową');
+      rethrow;
     }
   }
 
@@ -138,7 +238,8 @@ class RouteService {
 
   /// Builds the ORS request body; [strict] includes wheelchair restrictions.
   static Map<String, dynamic> orsBody(
-      LatLng from, Place to, NeedsProfile profile, {bool strict = true}) {
+      LatLng from, Place to, NeedsProfile profile,
+      {bool strict = true, String orsProfile = 'wheelchair'}) {
     // ORS accepts only these values for the wheelchair profile.
     double nearest(List<double> allowed, double v) =>
         allowed.reduce((a, b) => (a - v).abs() <= (b - v).abs() ? a : b);
@@ -151,7 +252,9 @@ class RouteService {
       'instructions': true,
       'language': 'pl',
       'units': 'm',
-      if (strict)
+      if (orsProfile == 'foot-walking')
+        'extra_info': ['steepness', 'surface', 'waytype'],
+      if (strict && orsProfile == 'wheelchair')
         'options': {
           'profile_params': {
             'restrictions': {
@@ -169,13 +272,14 @@ class RouteService {
 
   Future<PlannedRoute> _ors(
       LatLng from, String startLabel, Place to, NeedsProfile profile,
-      {required bool strict}) async {
-    final body = orsBody(from, to, profile, strict: strict);
+      {required bool strict, String orsProfile = 'wheelchair'}) async {
+    final body =
+        orsBody(from, to, profile, strict: strict, orsProfile: orsProfile);
 
     final res = await _client
         .post(
           Uri.parse(
-              'https://api.openrouteservice.org/v2/directions/wheelchair/geojson'),
+              'https://api.openrouteservice.org/v2/directions/$orsProfile/geojson'),
           headers: {'Authorization': apiKey, 'Content-Type': 'application/json'},
           body: jsonEncode(body),
         )
@@ -194,7 +298,11 @@ class RouteService {
       throw const OrsException('brak trasy', code: 2009);
     }
     final route = parseOrs(decoded as Map<String, dynamic>,
-        to: to, startLabel: startLabel, relaxed: !strict);
+        to: to,
+        startLabel: startLabel,
+        relaxed: orsProfile == 'wheelchair' && !strict,
+        orsProfile: orsProfile,
+        needs: orsProfile == 'foot-walking' ? profile : null);
     if (route.points.length < 2) {
       throw const OrsException('pusta trasa', code: 2009);
     }
@@ -209,8 +317,14 @@ class RouteService {
     }
   }
 
+  /// Parses an ORS geojson response. With [needs], barriers are computed
+  /// from the `extras` (walking route).
   static PlannedRoute parseOrs(Map<String, dynamic> json,
-      {required Place to, required String startLabel, bool relaxed = false}) {
+      {required Place to,
+      required String startLabel,
+      bool relaxed = false,
+      String orsProfile = 'wheelchair',
+      NeedsProfile? needs}) {
     final feature = (json['features'] as List).first as Map<String, dynamic>;
     final coords = (feature['geometry']['coordinates'] as List)
         .map((c) => LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble()))
@@ -222,10 +336,15 @@ class RouteService {
         for (final step in (seg as Map<String, dynamic>)['steps'] as List? ?? const [])
           step as Map<String, dynamic>,
     ];
+    final barriers =
+        needs == null ? const <RouteBarrier>[] : computeBarriers(props, needs);
     return PlannedRoute(
       destination: to,
       startLabel: startLabel,
       points: coords,
+      profile: orsProfile,
+      barriers: barriers,
+      accessible: barriers.isEmpty,
       distanceM: (summary['distance'] as num?)?.toDouble() ?? 0,
       durationS: (summary['duration'] as num?)?.toDouble() ?? 0,
       segments: [
@@ -240,10 +359,95 @@ class RouteService {
     );
   }
 
-  /// Maps the backend `/routes` response (contract v2).
+  /// ORS surface codes not suitable for a wheelchair.
+  static const badSurfaces = {
+    2: 'nieutwardzona',
+    10: 'żwir',
+    11: 'ziemia',
+    12: 'grunt',
+    13: 'lód',
+    15: 'piasek',
+    16: 'zrębki',
+    17: 'trawa',
+    18: 'płyty ażurowe',
+  };
+
+  /// Lower bound (%) of an ORS steepness class (±1..±5).
+  static int steepnessLowerBound(int cls) =>
+      const [0, 1, 4, 7, 10, 16][cls.abs().clamp(0, 5)];
+
+  static String _steepnessRange(int cls) =>
+      const ['0%', '1–3%', '4–6%', '7–9%', '10–15%', '≥16%'][cls.abs().clamp(0, 5)];
+
+  /// Barriers from ORS `extras` (steepness / surface / waytypes) for [needs].
+  static List<RouteBarrier> computeBarriers(
+      Map<String, dynamic> props, NeedsProfile needs) {
+    final extras = props['extras'] as Map<String, dynamic>? ?? const {};
+    List<List<int>> values(String key) => [
+          for (final v in (extras[key] as Map?)?['values'] as List? ?? const [])
+            [for (final n in v as List) (n as num).toInt()],
+        ];
+    final raw = <RouteBarrier>[];
+    for (final v in values('waytypes')) {
+      if (v.length == 3 && v[2] == 7) {
+        raw.add(RouteBarrier(
+            fromIndex: v[0], toIndex: v[1], type: 'steps', label: 'Schody'));
+      }
+    }
+    for (final v in values('steepness')) {
+      if (v.length == 3 && steepnessLowerBound(v[2]) > needs.maxInclinePct) {
+        raw.add(RouteBarrier(
+            fromIndex: v[0],
+            toIndex: v[1],
+            type: 'steep',
+            label: 'Stromy odcinek',
+            detail: 'ok. ${_steepnessRange(v[2])}'));
+      }
+    }
+    if (needs.preset == ProfilePreset.wheelchair) {
+      for (final v in values('surface')) {
+        final name = v.length == 3 ? badSurfaces[v[2]] : null;
+        if (name != null) {
+          raw.add(RouteBarrier(
+              fromIndex: v[0],
+              toIndex: v[1],
+              type: 'surface',
+              label: 'Nieodpowiednia nawierzchnia',
+              detail: name));
+        }
+      }
+    }
+    raw.sort((a, b) => a.fromIndex.compareTo(b.fromIndex));
+    // Merge touching spans of the same type and detail.
+    final out = <RouteBarrier>[];
+    for (final b in raw) {
+      final last = out.isEmpty ? null : out.last;
+      if (last != null &&
+          last.type == b.type &&
+          last.detail == b.detail &&
+          b.fromIndex <= last.toIndex) {
+        out[out.length - 1] = RouteBarrier(
+            fromIndex: last.fromIndex,
+            toIndex: max(last.toIndex, b.toIndex),
+            type: last.type,
+            label: last.label,
+            detail: last.detail);
+      } else {
+        out.add(b);
+      }
+    }
+    return out;
+  }
+
+  /// Maps the backend `/routes` response (contract v3, with barriers).
   static PlannedRoute parseApi(Map<String, dynamic> json,
       {required Place to, required String startLabel}) {
     final fallback = json['fallback'] as bool? ?? false;
+    final barriers = <RouteBarrier>[
+      for (final b in json['barriers'] as List? ?? const [])
+        if (RouteBarrier.fromJson(b) case final RouteBarrier r) r,
+    ];
+    final alt = json['alternative'];
     return PlannedRoute(
       destination: to,
       startLabel: startLabel,
@@ -268,10 +472,17 @@ class RouteService {
           (fallback
               ? 'Serwer: trasa w linii prostej (OpenRouteService niedostępny)'
               : null),
+      profile: json['profile'] as String? ?? 'foot-walking',
+      barriers: barriers,
+      accessible: json['accessible'] as bool? ?? barriers.isEmpty,
+      alternative: alt is Map<String, dynamic>
+          ? parseApi(alt, to: to, startLabel: startLabel)
+          : null,
     );
   }
 
-  /// Sample route used without a key or network. Clearly marked as demo.
+  /// Sample route used without a key or network. Clearly marked as demo:
+  /// a walking route with one sample barrier + a sample accessible detour.
   static PlannedRoute demoRoute(LatLng from, String startLabel, Place to,
       {String? reason}) {
     const distance = Distance();
@@ -287,21 +498,59 @@ class RouteService {
     final first = distance(from, mid);
     final second = max(0.0, total - first);
 
+    final altMid = LatLng(
+      (from.latitude + end.latitude) / 2 - 0.0009,
+      (from.longitude + end.longitude) / 2 + 0.0011,
+    );
+    final altDistance = distance(from, altMid) + distance(altMid, end);
+    final alternative = PlannedRoute(
+      destination: to,
+      startLabel: startLabel,
+      points: [from, altMid, end],
+      distanceM: altDistance,
+      durationS: altDistance / 1.0, // ~3.6 km/h wheelchair pace
+      profile: 'wheelchair',
+      segments: [
+        RouteSegment(
+          instruction: 'Ruszaj: $startLabel — objazd bez schodów',
+          distanceM: altDistance * 0.5,
+          warning: 'DANE PRZYKŁADOWE',
+        ),
+        RouteSegment(
+          instruction: 'Cel: ${to.name}',
+          distanceM: altDistance * 0.5,
+        ),
+      ],
+      isDemo: true,
+    );
+
     return PlannedRoute(
       destination: to,
       startLabel: startLabel,
       points: points,
       distanceM: total,
-      durationS: total / 1.0, // ~3.6 km/h wheelchair pace
+      durationS: total / 1.3, // ~4.7 km/h walking pace
+      profile: 'foot-walking',
+      barriers: const [
+        RouteBarrier(
+          fromIndex: 0,
+          toIndex: 1,
+          type: 'steps',
+          label: 'Schody (przykład)',
+          detail: 'DANE PRZYKŁADOWE',
+        ),
+      ],
+      accessible: false,
+      alternative: alternative,
       segments: [
         RouteSegment(
-          instruction: 'Ruszaj: $startLabel — chodnik bez schodów',
+          instruction: 'Ruszaj: $startLabel',
           distanceM: first * 0.4,
         ),
         RouteSegment(
-          instruction: 'Przejście dla pieszych z sygnalizacją',
+          instruction: 'Zejdź schodami',
           distanceM: 15,
-          warning: 'Obniżony krawężnik',
+          warning: 'Schody — DANE PRZYKŁADOWE',
         ),
         RouteSegment(
           instruction: 'Prosto, deptak',
@@ -309,9 +558,8 @@ class RouteService {
           warning: 'Nawierzchnia: kostka brukowa',
         ),
         RouteSegment(
-          instruction: 'Skręć w lewo i jedź łagodnym podjazdem',
+          instruction: 'Skręć w lewo',
           distanceM: second * 0.7,
-          warning: 'Rampa, nachylenie ok. 5%',
         ),
         RouteSegment(
           instruction: 'Cel: ${to.name}',
@@ -336,6 +584,14 @@ class OrsException implements Exception {
 final routeServiceProvider = Provider((ref) =>
     RouteService(api: useApi ? ref.watch(apiClientProvider) : null));
 
+/// true = map and panel show [PlannedRoute.alternative] instead of the
+/// walking route. Reset on every new plan / clear.
+final showAlternativeProvider = StateProvider<bool>((ref) => false);
+
+/// The route currently displayed (walking or its accessible alternative).
+PlannedRoute? displayedRoute(PlannedRoute? route, bool showAlternative) =>
+    showAlternative && route?.alternative != null ? route!.alternative : route;
+
 class RouteNotifier extends Notifier<AsyncValue<PlannedRoute?>> {
   @override
   AsyncValue<PlannedRoute?> build() => const AsyncData(null);
@@ -359,6 +615,7 @@ class RouteNotifier extends Notifier<AsyncValue<PlannedRoute?>> {
     final from = start.point;
     final label = start.label;
 
+    ref.read(showAlternativeProvider.notifier).state = false;
     state = const AsyncLoading();
     state = AsyncData(await ref.read(routeServiceProvider).plan(
           from: from,
@@ -374,7 +631,10 @@ class RouteNotifier extends Notifier<AsyncValue<PlannedRoute?>> {
     if (to != null && state.value != null) await plan(to);
   }
 
-  void clear() => state = const AsyncData(null);
+  void clear() {
+    ref.read(showAlternativeProvider.notifier).state = false;
+    state = const AsyncData(null);
+  }
 }
 
 final routeProvider =
