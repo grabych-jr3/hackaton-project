@@ -389,7 +389,8 @@ class RouteService {
         ];
     final raw = <RouteBarrier>[];
     for (final v in values('waytypes')) {
-      if (v.length == 3 && v[2] == 7) {
+      // ORS waytype 8 = steps (7 = footway).
+      if (v.length == 3 && v[2] == 8) {
         raw.add(RouteBarrier(
             fromIndex: v[0], toIndex: v[1], type: 'steps', label: 'Schody'));
       }

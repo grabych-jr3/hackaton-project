@@ -85,7 +85,7 @@ void main() {
         'waytypes': {
           'values': [
             [0, 3, 3],
-            [3, 5, 7], // steps
+            [3, 5, 8], // steps
             [5, 9, 4],
           ],
         },
