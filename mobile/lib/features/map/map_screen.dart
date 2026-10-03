@@ -181,10 +181,10 @@ class _PlacesMap extends ConsumerWidget {
       ),
       children: [
         TileLayer(
-          // CARTO Voyager: OSM data, CORS-friendly, light style.
+          // Stadia Alidade Smooth: OSM data, light style. Free on localhost;
+          // a deployed domain must be registered at stadiamaps.com (no key in code).
           urlTemplate:
-              'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-          subdomains: const ['a', 'b', 'c', 'd'],
+              'https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}{r}.png',
           retinaMode: RetinaMode.isHighDensity(context),
           userAgentPackageName: 'pl.krakowbezbarier.app',
           tileProvider: kIsWeb ? _PlainWebTileProvider() : NetworkTileProvider(),
@@ -208,7 +208,8 @@ class _PlacesMap extends ConsumerWidget {
           alignment: AttributionAlignment.bottomLeft,
           attributions: [
             TextSourceAttribution('OpenStreetMap contributors'),
-            TextSourceAttribution('CARTO'),
+            TextSourceAttribution('Stadia Maps'),
+            TextSourceAttribution('OpenMapTiles'),
           ],
         ),
       ],
