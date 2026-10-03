@@ -356,7 +356,7 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
   "distanceM": 1240, "durationS": 1110,
   "geometry": [[50.0617,19.9373],[50.0612,19.9370]],
   "segments": [
-    { "instruction": "Skręć w lewo w Grodzką", "distanceM": 320, "warnings": [] }
+    { "instruction": "Skręć w lewo w Grodzką", "distanceM": 320, "warning": null }
   ],
   "order": [0, 1],
   "source": "openrouteservice",
@@ -432,7 +432,28 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
 
 `GET /vouchers` — мои ваучеры (активные и истёкшие).
 
+### 5.7a Игра v2: анкета барьера (реализовано, контракт v2)
+Правила — порт `mobile/lib/features/game/game_models.dart` (`GameRules`), случайность на сервере.
+Ошибки: `{ "error": CODE, "code": CODE, "message" }` (клиент читает `code`).
+
+- `GET /game/catalog` (public) → копия `mobile/assets/demo/game.json` (`dataset, isDemo, initialPoints, species[], offers[], districts[]`).
+- `GET /game/state` (auth) → `{ "points": 120, "caught": { "golab": 2 }, "vouchers": [ { "offerId", "code", "activatedAt", "expiresAt" } ] }`. Новый пользователь получает `initialPoints` (120) при первом `/auth/anonymous`.
+- `POST /game/reports` (auth)
+  ```json
+  { "placeId": "wawel", "report": { "placeId": "wawel", "steps": 3, "curb": "high", "passage": "narrow",
+    "noRamp": true, "uneven": false, "obstacles": false } }
+  ```
+  `curb` ∈ none|low|mid|high, `passage` ∈ none|wide|medium|narrow.
+  severity: steps>0 → +1 (≥3 → +2); curb mid +1, high +2; passage medium +1, narrow +2; noRamp +2; uneven +1; obstacles +1.
+  score = severity + random(0..3): ≥10 legendary (150), ≥6 epic (60), ≥3 rare (25), иначе common (10); вид — случайный из этой редкости.
+  Ответ: `{ "species": {id,name,emoji,rarity}, "points": 60, "state": GameState }`.
+  Если есть placeId — создаются факты `source=user` (`sourceRef=report:<id>`): steps>0 → `steps`; curb low/mid/high → `kerbHeight` "0-3"/"3-7"/">7"; passage wide/medium/narrow → `doorWidth` ">90"/"70-90"/"<70"; noRamp → `ramp=false`.
+- `POST /game/vouchers` (auth) `{ "offerId" }` → `{ "voucher": {offerId,code:"KBB-XXXX",activatedAt,expiresAt}, "state" }`; срок 120 мин.
+  `402 INSUFFICIENT_POINTS`, `403 OFFER_NOT_VERIFIED`, `404 NOT_FOUND`.
+- Хранение: `user_species`, `game_report`, `game_voucher` (V2), очки — `app_user.points` + `points_ledger`.
+
 ### 5.8 Служебное
+`GET /health` и `GET /api/v1/health` → `{ "status": "UP" }` (public, клиент определяет доступность сервера).
 `GET /health/sources` → содержимое `source_status`. По нему Flutter показывает баннер «Dane z dnia X — źródło chwilowo niedostępne».
 
 ---

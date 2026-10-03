@@ -100,7 +100,7 @@ public class RouteService {
         List<Segment> segments = new ArrayList<>();
         for (JsonNode seg : props.path("segments")) {
             for (JsonNode step : seg.path("steps")) {
-                segments.add(new Segment(step.path("instruction").asText(""), step.path("distance").asDouble(), List.of()));
+                segments.add(new Segment(step.path("instruction").asText(""), step.path("distance").asDouble(), null));
             }
         }
         return new RouteResponse(props.path("summary").path("distance").asDouble(),
@@ -118,7 +118,7 @@ public class RouteService {
         }
         double rounded = Math.round(dist);
         return new RouteResponse(rounded, Math.round(dist / FALLBACK_SPEED), geometry,
-                List.of(new Segment("Linia prosta - brak danych o trasie", rounded, List.of("fallback"))),
+                List.of(new Segment("Linia prosta - brak danych o trasie", rounded, "Trasa przybliżona (linia prosta) - brak danych o dostępności")),
                 IntStream.range(0, pts.size()).boxed().toList(), "straight-line", true);
     }
 }

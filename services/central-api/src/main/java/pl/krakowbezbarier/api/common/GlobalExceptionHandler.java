@@ -20,7 +20,10 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    public record ApiError(String error, String message) {}
+    /** error and code carry the same value (client reads code). */
+    public record ApiError(String error, String code, String message) {
+        public ApiError(String error, String message) { this(error, error, message); }
+    }
 
     @ExceptionHandler(ApiException.class)
     ResponseEntity<ApiError> api(ApiException e) {

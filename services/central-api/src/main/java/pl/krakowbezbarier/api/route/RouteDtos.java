@@ -20,7 +20,8 @@ public final class RouteDtos {
         public String toString() { return "RouteRequest[points=" + (points == null ? 0 : points.size()) + "]"; }
     }
 
-    public record Segment(String instruction, double distanceM, List<String> warnings) {}
+    /** warning: single nullable string (contract v2). */
+    public record Segment(String instruction, double distanceM, String warning) {}
 
     /** geometry is a list of [lat, lng] pairs (Flutter order). */
     public record RouteResponse(double distanceM, double durationS, List<double[]> geometry, List<Segment> segments,
