@@ -181,7 +181,11 @@ class _PlacesMap extends ConsumerWidget {
       ),
       children: [
         TileLayer(
-          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+          // CARTO Voyager: OSM data, CORS-friendly, light style.
+          urlTemplate:
+              'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+          subdomains: const ['a', 'b', 'c', 'd'],
+          retinaMode: RetinaMode.isHighDensity(context),
           userAgentPackageName: 'pl.krakowbezbarier.app',
           tileProvider: kIsWeb ? _PlainWebTileProvider() : NetworkTileProvider(),
         ),
@@ -202,7 +206,10 @@ class _PlacesMap extends ConsumerWidget {
         ),
         const RichAttributionWidget(
           alignment: AttributionAlignment.bottomLeft,
-          attributions: [TextSourceAttribution('OpenStreetMap contributors')],
+          attributions: [
+            TextSourceAttribution('OpenStreetMap contributors'),
+            TextSourceAttribution('CARTO'),
+          ],
         ),
       ],
     );
