@@ -25,6 +25,11 @@ public class GameController {
         return game.submitReport(CurrentUser.id(), req);
     }
 
+    @PostMapping("/sell")
+    public GameService.SellResponse sell(@RequestBody GameService.SellRequest req) {
+        return game.sell(CurrentUser.id(), req);
+    }
+
     @PostMapping("/vouchers")
     public GameService.VoucherResponse voucher(@RequestBody GameService.VoucherRequest req) {
         if (req == null || req.offerId() == null || req.offerId().isBlank()) throw ApiException.badRequest("offerId is required");

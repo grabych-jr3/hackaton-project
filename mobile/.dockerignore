@@ -1,0 +1,4 @@
+build/
+.dart_tool/
+config/secrets.json
+.git

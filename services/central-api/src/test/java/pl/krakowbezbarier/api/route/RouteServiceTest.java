@@ -27,6 +27,17 @@ class RouteServiceTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void missingWidthDefaultsTo75cm() {
+        for (RouteProfile p : new RouteProfile[]{new RouteProfile(3, null, 6), null}) {
+            var r = new RouteRequest(req.points(), p, true, false);
+            var restr = (Map<String, Object>) ((Map<String, Object>) ((Map<String, Object>) RouteService.orsBody(r)
+                    .get("options")).get("profile_params")).get("restrictions");
+            assertEquals(0.75, restr.get("minimum_width"));
+        }
+    }
+
+    @Test
     void noKeyGivesStraightLineFallback() {
         RouteResponse r = new RouteService("", "http://localhost:1", 10).route(req);
         assertTrue(r.fallback());

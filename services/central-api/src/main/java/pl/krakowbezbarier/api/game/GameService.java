@@ -49,7 +49,12 @@ public class GameService {
     public Catalog catalog() { return catalog; }
 
     public record ReportRequest(String placeId, BarrierReport report) {}
-    public record ReportResponse(Species species, int points, GameState state) {}
+    /** points = the creature's sell value; awarded is always 0 (catching no longer adds points). */
+    public record ReportResponse(Species species, int points, int awarded, GameState state) {
+        public ReportResponse(Species species, int points, GameState state) { this(species, points, 0, state); }
+    }
+    public record SellRequest(String speciesId, Integer count) {}
+    public record SellResponse(int earned, GameState state) {}
     public record VoucherRequest(String offerId) {}
     public record VoucherResponse(Voucher voucher, GameState state) {}
 
@@ -92,7 +97,6 @@ public class GameService {
                 INSERT INTO user_species (user_id, species_id, count) VALUES (?, ?, 1)
                 ON CONFLICT (user_id, species_id) DO UPDATE SET count = user_species.count + 1""",
                 userId, species.id());
-        points.award(userId, pts, "report", reportId.toString());
 
         if (placeId != null) {
             Instant now = Instant.now();
@@ -108,6 +112,31 @@ public class GameService {
             }
         }
         return new ReportResponse(species, pts, state(userId));
+    }
+
+    @Transactional
+    public SellResponse sell(UUID userId, SellRequest req) {
+        if (req == null || req.speciesId() == null || req.speciesId().isBlank()) throw ApiException.badRequest("speciesId is required");
+        if (req.count() == null || req.count() < 1) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_COUNT", "count must be at least 1");
+        }
+        Species species = catalog.species().stream().filter(s -> s.id().equals(req.speciesId())).findFirst()
+                .orElseThrow(() -> ApiException.notFound("Species " + req.speciesId() + " not found"));
+        List<Integer> owned = jdbc.queryForList(
+                "SELECT count FROM user_species WHERE user_id = ? AND species_id = ? FOR UPDATE", Integer.class, userId, species.id());
+        int have = owned.isEmpty() || owned.get(0) == null ? 0 : owned.get(0);
+        int count = req.count();
+        if (count > have) {
+            throw new ApiException(HttpStatus.CONFLICT, "NOT_ENOUGH_CREATURES", "You own only " + have + " of " + species.id());
+        }
+        if (count == have) {
+            jdbc.update("DELETE FROM user_species WHERE user_id = ? AND species_id = ?", userId, species.id());
+        } else {
+            jdbc.update("UPDATE user_species SET count = count - ? WHERE user_id = ? AND species_id = ?", count, userId, species.id());
+        }
+        int earned = GameRules.sellEarnings(species.rarity(), count);
+        points.award(userId, earned, "sell", UUID.randomUUID().toString());
+        return new SellResponse(earned, state(userId));
     }
 
     @Transactional

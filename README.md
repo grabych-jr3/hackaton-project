@@ -19,34 +19,47 @@ Każda informacja o dostępności ma **źródło, datę i poziom wiarygodności*
 | Zgłaszanie barier (ankieta), kolekcja stworków, punkty, vouchery ważne 2 h | ✅ (dane przykładowe) |
 | Backend: Java Spring Boot + PostGIS, analiza zdjęć Python + Gemini, Kafka (Redpanda) | 🛠 w repozytorium, poza MVP |
 
-## Uruchomienie aplikacji (Flutter)
+## Uruchomienie (Docker — zalecane dla jury)
+
+Cały system (aplikacja web, API, baza PostGIS, Redpanda/Kafka, analiza zdjęć) startuje jednym poleceniem.
+
+**Wymagania:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows / macOS) lub Docker Engine z Compose v2 (Linux), ok. 6 GB wolnego miejsca. Wolne porty: 3000, 8080, 8000, 5432, 19092.
+
+```bash
+git clone <adres-repozytorium> krakow-bez-barier
+cd krakow-bez-barier
+cp .env.example .env          # Windows (PowerShell): Copy-Item .env.example .env
+docker compose up --build
+```
+
+Pierwsze uruchomienie trwa kilka–kilkanaście minut (budowa obrazów Java, Python i Flutter). Gdy kontenery wystartują:
+
+| Co | Adres |
+|---|---|
+| Aplikacja (Flutter web) | http://localhost:3000 |
+| Dokumentacja API (Swagger UI) | http://localhost:8080/swagger-ui.html |
+| Health API | http://localhost:8080/health |
+
+**Klucze w `.env` są opcjonalne** — bez nich wszystko działa:
+- bez `ORS_API_KEY` (OpenRouteService) trasa jest wyznaczana jako linia prosta (z oznaczeniem),
+- bez `GEMINI_API_KEY` analiza zdjęć używa deterministycznego trybu demo (mock),
+- bez `JWT_SECRET` serwer generuje losowy sekret przy starcie.
+
+**Zatrzymanie:** `Ctrl+C` w terminalu, potem `docker compose down` (dodaj `-v`, aby usunąć też dane bazy i zdjęcia). Uruchomienie w tle: `docker compose up --build -d`.
+
+### Uruchomienie aplikacji bez Dockera (dla deweloperów)
 
 Wymagania: Flutter 3.41+, Chrome.
 
 ```bash
 cd mobile
 flutter pub get
-flutter run -d chrome
+flutter run -d chrome --dart-define=API_BASE_URL=http://localhost:8080/api/v1
 ```
 
-Trasa z OpenRouteService wymaga klucza (bezpłatny: openrouteservice.org). Skopiuj `mobile/config/secrets.example.json` do `mobile/config/secrets.json` (plik jest w `.gitignore`), wpisz klucz i uruchom:
+Bez `API_BASE_URL` aplikacja działa w trybie offline na danych demonstracyjnych. Klucz ORS dla trasy liczonej w aplikacji: skopiuj `mobile/config/secrets.example.json` do `mobile/config/secrets.json` (plik w `.gitignore`) i dodaj `--dart-define-from-file=config/secrets.json`.
 
-```bash
-flutter run -d chrome --dart-define-from-file=config/secrets.json
-```
-
-Bez klucza aplikacja działa, a trasa jest pokazywana jako **przykładowa** (z oznaczeniem).
-
-Budowa wersji web: `flutter build web --release` → katalog `mobile/build/web`.
-
-## Backend (poza MVP)
-
-```bash
-cp .env.example .env      # uzupełnij klucze
-docker compose up --build # PostGIS, Redpanda, central-api :8080, vision-service :8000
-```
-
-Szczegóły: [docs/BACKEND.md](docs/BACKEND.md), `services/central-api/README.md`, `services/vision-service/README.md`.
+Szczegóły backendu: [docs/BACKEND.md](docs/BACKEND.md), `services/central-api/README.md`, `services/vision-service/README.md`.
 
 ## Struktura repozytorium
 
@@ -55,7 +68,7 @@ mobile/                    aplikacja Flutter (Android / Web)
 services/central-api/      Java 21 · Spring Boot · PostGIS — centralne API
 services/vision-service/   Python · FastAPI · OpenCV · Gemini — analiza zdjęć barier
 docs/                      specyfikacja (TZ), plan etapów, plan backendu, regulamin wyzwania
-docker-compose.yml         cały backend jednym poleceniem
+docker-compose.yml         cały system (web :3000 + backend) jednym poleceniem
 ```
 
 ## Źródła danych i licencje

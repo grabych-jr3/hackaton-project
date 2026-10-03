@@ -60,4 +60,10 @@ services:
     depends_on:
       redpanda: { condition: service_healthy }
 
+  web:
+    build: ./mobile
+    ports: ["3000:80"]
+    depends_on:
+      central-api: { condition: service_healthy }
+
 volumes: { dbdata: {}, photos: {} }

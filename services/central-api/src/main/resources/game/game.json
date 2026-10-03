@@ -3,14 +3,14 @@
   "isDemo": true,
   "initialPoints": 120,
   "species": [
-    {"id": "golab", "name": "Gołąb", "emoji": "🐦", "rarity": "common"},
-    {"id": "jez", "name": "Jeż", "emoji": "🦔", "rarity": "common"},
-    {"id": "lis", "name": "Lis", "emoji": "🦊", "rarity": "common"},
-    {"id": "sowa", "name": "Sowa", "emoji": "🦉", "rarity": "rare"},
-    {"id": "wydra", "name": "Wydra", "emoji": "🦦", "rarity": "rare"},
-    {"id": "bocian", "name": "Bocian", "emoji": "🕊️", "rarity": "epic"},
-    {"id": "niedzwiedz", "name": "Niedźwiedź", "emoji": "🐻", "rarity": "epic"},
-    {"id": "smok", "name": "Smok", "emoji": "🐉", "rarity": "legendary"}
+    {"id": "golab", "name": "Gołąb", "emoji": "🐦", "rarity": "common", "sellValue": 10, "description": "Gołąb z Rynku Głównego – podobno potomek rycerzy księcia Henryka Probusa zaczarowanych w ptaki. Zna każdy krawężnik wokół Sukiennic."},
+    {"id": "jez", "name": "Jeż", "emoji": "🦔", "rarity": "common", "sellValue": 10, "description": "Jeż z Plant, który nocą obchodzi cały pierścień parku wokół Starego Miasta. Najchętniej wybiera alejki bez schodów."},
+    {"id": "lis", "name": "Lis", "emoji": "🦊", "rarity": "common", "sellValue": 10, "description": "Lis z Lasku Wolskiego, sprytny przewodnik po skrótach. Zawsze znajdzie łagodny podjazd tam, gdzie inni widzą tylko stopnie."},
+    {"id": "sowa", "name": "Sowa", "emoji": "🦉", "rarity": "rare", "sellValue": 25, "description": "Sowa z dziedzińca Collegium Maius, najstarszej siedziby Uniwersytetu Jagiellońskiego. Mądra jak profesor – pamięta każdy próg w zaułkach Starego Miasta."},
+    {"id": "wydra", "name": "Wydra", "emoji": "🦦", "rarity": "rare", "sellValue": 25, "description": "Wydra z bulwarów wiślanych, która pływa między Kazimierzem a Podgórzem. Uwielbia płaskie, szerokie nabrzeża."},
+    {"id": "bocian", "name": "Bocian", "emoji": "🕊️", "rarity": "epic", "sellValue": 60, "description": "Bocian, który wiosną wraca nad Wisłę i krąży nad Kopcem Kościuszki. Z góry widzi, gdzie miasto jest dostępne, a gdzie jeszcze nie."},
+    {"id": "niedzwiedz", "name": "Niedźwiedź", "emoji": "🐻", "rarity": "epic", "sellValue": 60, "description": "Niedźwiedź z legend o kopcu Krakusa, strażnik Podgórza. Silny, ale cierpliwy – czeka, aż każda bariera zostanie zgłoszona."},
+    {"id": "smok", "name": "Smok", "emoji": "🐉", "rarity": "legendary", "sellValue": 150, "description": "Smok Wawelski we własnej osobie – ten sam, którego szewczyk Skuba pokonał baranem wypchanym siarką. Dziś zamiast zjadać owce pilnuje, by na Wawel dało się wjechać bez schodów."}
   ],
   "offers": [
     {"id": "kawa-rynek", "partner": "Kawiarnia Pod Arkadami (demo)", "placeId": "sukiennice", "discount": "-20% na kawę", "cost": 50, "verifiedAccess": true},
