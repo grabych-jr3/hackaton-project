@@ -7,7 +7,6 @@ class NeedsProfile {
     required this.preset,
     required this.maxSteps,
     required this.maxKerbCm,
-    required this.minWidthCm,
     required this.maxInclinePct,
     this.needsToilet = false,
     this.needsBenches = false,
@@ -18,7 +17,6 @@ class NeedsProfile {
     preset: ProfilePreset.wheelchair,
     maxSteps: 0,
     maxKerbCm: 3,
-    minWidthCm: 80,
     maxInclinePct: 6,
     needsToilet: true,
   );
@@ -27,14 +25,17 @@ class NeedsProfile {
     preset: ProfilePreset.stroller,
     maxSteps: 2,
     maxKerbCm: 6,
-    minWidthCm: 60,
     maxInclinePct: 10,
   );
 
   final ProfilePreset preset;
   final int maxSteps;
   final int maxKerbCm;
-  final int minWidthCm;
+  /// Averaged passage width for every wheelchair / stroller type. Not
+  /// user-configurable.
+  static const standardWidthCm = 75;
+
+  int get minWidthCm => standardWidthCm;
   final int maxInclinePct;
   final bool needsToilet;
   final bool needsBenches;
@@ -44,7 +45,6 @@ class NeedsProfile {
     ProfilePreset? preset,
     int? maxSteps,
     int? maxKerbCm,
-    int? minWidthCm,
     int? maxInclinePct,
     bool? needsToilet,
     bool? needsBenches,
@@ -54,7 +54,6 @@ class NeedsProfile {
       preset: preset ?? this.preset,
       maxSteps: maxSteps ?? this.maxSteps,
       maxKerbCm: maxKerbCm ?? this.maxKerbCm,
-      minWidthCm: minWidthCm ?? this.minWidthCm,
       maxInclinePct: maxInclinePct ?? this.maxInclinePct,
       needsToilet: needsToilet ?? this.needsToilet,
       needsBenches: needsBenches ?? this.needsBenches,
@@ -78,7 +77,7 @@ class NeedsProfile {
       preset: ProfilePreset.values.byName(json['preset'] as String),
       maxSteps: json['maxSteps'] as int,
       maxKerbCm: json['maxKerbCm'] as int,
-      minWidthCm: json['minWidthCm'] as int,
+      // Stored 'minWidthCm' from older versions is ignored (always 75).
       maxInclinePct: json['maxInclinePct'] as int,
       needsToilet: json['needsToilet'] as bool? ?? false,
       needsBenches: json['needsBenches'] as bool? ?? false,

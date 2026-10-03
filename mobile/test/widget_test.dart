@@ -11,6 +11,7 @@ import 'package:hackaton_project/data/models/place.dart';
 import 'package:hackaton_project/data/repositories/places_repository.dart';
 import 'package:hackaton_project/data/repositories/profile_repository.dart';
 import 'package:hackaton_project/features/place/place_providers.dart';
+import 'package:hackaton_project/features/place/places_list.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Future<void> pumpApp(WidgetTester tester) async {
@@ -122,7 +123,9 @@ void filterTests() {
 
     await tester.enterText(find.byType(TextField), 'schindler');
     await tester.pumpAndSettle();
-    expect(find.text('Fabryka Emalia Oskara Schindlera'), findsOneWidget);
-    expect(find.text('Sukiennice'), findsNothing);
+    Finder inList(String t) =>
+        find.descendant(of: find.byType(PlacesList), matching: find.text(t));
+    expect(inList('Fabryka Emalia Oskara Schindlera'), findsOneWidget);
+    expect(inList('Sukiennice'), findsNothing);
   });
 }

@@ -69,15 +69,6 @@ class ProfileScreen extends ConsumerWidget {
                     onChanged: (v) => edit(profile.copyWith(maxKerbCm: v)),
                   ),
                   _ThresholdSlider(
-                    label: 'Min. szerokość przejścia',
-                    value: profile.minWidthCm,
-                    min: 50,
-                    max: 120,
-                    divisions: 14,
-                    unit: ' cm',
-                    onChanged: (v) => edit(profile.copyWith(minWidthCm: v)),
-                  ),
-                  _ThresholdSlider(
                     label: 'Maks. nachylenie',
                     value: profile.maxInclinePct,
                     max: 15,
@@ -158,15 +149,11 @@ class _ThresholdSlider extends StatelessWidget {
     required this.max,
     required this.unit,
     required this.onChanged,
-    this.min = 0,
-    this.divisions,
   });
 
   final String label;
   final int value;
-  final int min;
   final int max;
-  final int? divisions;
   final String unit;
   final ValueChanged<int> onChanged;
 
@@ -194,9 +181,8 @@ class _ThresholdSlider extends StatelessWidget {
           ),
           Slider(
             value: value.toDouble(),
-            min: min.toDouble(),
             max: max.toDouble(),
-            divisions: divisions ?? (max - min),
+            divisions: max,
             label: valueText,
             semanticFormatterCallback: (_) => '$label: $valueText',
             onChanged: (v) => onChanged(v.round()),
