@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -182,6 +183,7 @@ class _PlacesMap extends ConsumerWidget {
         TileLayer(
           urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
           userAgentPackageName: 'pl.krakowbezbarier.app',
+          tileProvider: kIsWeb ? _PlainWebTileProvider() : NetworkTileProvider(),
         ),
         MarkerLayer(
           markers: [
@@ -333,4 +335,12 @@ class _PlacePreview extends ConsumerWidget {
       ),
     );
   }
+}
+
+/// On web, custom headers (User-Agent) trigger a CORS preflight that the
+/// OSM tile server rejects, so tiles are loaded as plain images.
+class _PlainWebTileProvider extends TileProvider {
+  @override
+  ImageProvider getImage(TileCoordinates coordinates, TileLayer options) =>
+      NetworkImage(getTileUrl(coordinates, options));
 }
