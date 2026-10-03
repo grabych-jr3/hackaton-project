@@ -184,7 +184,7 @@ class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProv
           // Mode Switcher Pill (AR Camera vs Manual Survey)
           Container(
             margin: const EdgeInsets.only(right: 16),
-            padding: const EdgeInsets.all(3),
+            padding: const EdgeInsets.all(2),
             decoration: BoxDecoration(
               color: AppColors.surfaceElevated,
               borderRadius: BorderRadius.circular(20),
@@ -236,8 +236,10 @@ class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProv
                 ],
               ),
             ),
-            child: CustomPaint(
-              painter: _CameraGridPainter(),
+            child: ExcludeSemantics(
+              child: CustomPaint(
+                painter: _CameraGridPainter(),
+              ),
             ),
           ),
         ),
@@ -257,7 +259,7 @@ class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProv
                 child: BackdropFilter(
                   filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
                     decoration: BoxDecoration(
                       color: AppColors.surfaceGlass,
                       borderRadius: BorderRadius.circular(20),
@@ -266,7 +268,6 @@ class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProv
                     child: DropdownButtonHideUnderline(
                       child: DropdownButton<String?>(
                         value: _placeId,
-                        isDense: true,
                         isExpanded: true,
                         dropdownColor: AppColors.surfaceElevated,
                         icon: const Icon(Icons.arrow_drop_down, color: AppColors.primary),
@@ -354,11 +355,6 @@ class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProv
                 label: 'Krawężnik: <3cm',
                 isOk: true,
               ),
-              _AiTag(
-                icon: Icons.auto_awesome,
-                label: 'AI: 99%',
-                isOk: true,
-              ),
             ],
           ),
         ),
@@ -368,7 +364,9 @@ class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProv
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
+              // Decorative reticle + animated creature: hidden from screen readers.
+              ExcludeSemantics(
+                child: Container(
                 width: 200,
                 height: 200,
                 decoration: BoxDecoration(
@@ -430,6 +428,7 @@ class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProv
                   ],
                 ),
               ),
+              ),
               const SizedBox(height: 12),
               const Text(
                 'Nakieruj na przejście lub barierę',
@@ -472,7 +471,11 @@ class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProv
               ),
               const SizedBox(height: 18),
               // Big Minimalist Shutter / Scan Button
-              GestureDetector(
+              _FocusTap(
+                label: _sending
+                    ? 'Wysyłanie zgłoszenia…'
+                    : 'Zrób zdjęcie, zgłoś barierę i złap stworka',
+                circle: true,
                 onTap: _sending ? null : () => _submit(true),
                 child: Container(
                   width: 68,
@@ -695,7 +698,9 @@ class _ModeTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return _FocusTap(
+      label: 'Tryb: $label',
+      selected: isSelected,
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
@@ -779,7 +784,10 @@ class _QuickPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return _FocusTap(
+      label: 'Bariera: $label',
+      selected: isSelected,
+      toggled: isSelected,
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
@@ -797,6 +805,75 @@ class _QuickPill extends StatelessWidget {
             fontSize: 11,
             fontWeight: FontWeight.w700,
             color: isSelected ? const Color(0xFF090D12) : AppColors.text,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Keyboard-focusable button wrapper: InkWell (Enter/Space activation),
+/// visible focus ring, 48x48 minimum target and a screen-reader label.
+class _FocusTap extends StatefulWidget {
+  const _FocusTap({
+    required this.label,
+    required this.onTap,
+    required this.child,
+    this.selected,
+    this.toggled,
+    this.circle = false,
+  });
+
+  final String label;
+  final VoidCallback? onTap;
+  final Widget child;
+  final bool? selected;
+  final bool? toggled;
+  final bool circle;
+
+  @override
+  State<_FocusTap> createState() => _FocusTapState();
+}
+
+class _FocusTapState extends State<_FocusTap> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = widget.circle ? null : BorderRadius.circular(20);
+    return Semantics(
+      container: true,
+      button: true,
+      enabled: widget.onTap != null,
+      selected: widget.selected,
+      toggled: widget.toggled,
+      label: widget.label,
+      excludeSemantics: true,
+      onTap: widget.onTap,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            customBorder: widget.circle ? const CircleBorder() : null,
+            borderRadius: radius,
+            onTap: widget.onTap,
+            onFocusChange: (f) => setState(() => _focused = f),
+            child: Center(
+              widthFactor: 1,
+              heightFactor: 1,
+              child: DecoratedBox(
+                position: DecorationPosition.foreground,
+                decoration: BoxDecoration(
+                  shape: widget.circle ? BoxShape.circle : BoxShape.rectangle,
+                  borderRadius: radius,
+                  border: _focused
+                      ? Border.all(color: AppColors.primary, width: 2.5)
+                      : null,
+                ),
+                child: widget.child,
+              ),
+            ),
           ),
         ),
       ),

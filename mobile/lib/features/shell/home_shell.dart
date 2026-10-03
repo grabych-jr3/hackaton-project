@@ -110,13 +110,12 @@ class _NavItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Expanded(
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
+      child: _FocusableTab(
+        label: label,
+        isSelected: isSelected,
+        onTap: onTap,
+        child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -147,6 +146,66 @@ class _NavItem extends StatelessWidget {
               ],
             ),
           ),
+      ),
+    );
+  }
+}
+
+/// Keyboard-focusable tap target with a visible focus ring (WCAG 2.4.7)
+/// and screen-reader semantics. Enter/Space activate via InkWell.
+class _FocusableTab extends StatefulWidget {
+  const _FocusableTab({
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+    required this.child,
+    this.circle = false,
+  });
+
+  final String label;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final Widget child;
+  final bool circle;
+
+  @override
+  State<_FocusableTab> createState() => _FocusableTabState();
+}
+
+class _FocusableTabState extends State<_FocusableTab> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = widget.circle ? null : BorderRadius.circular(20);
+    return Semantics(
+      container: true,
+      button: true,
+      selected: widget.isSelected,
+      label: widget.label,
+      excludeSemantics: true,
+      onTap: widget.onTap,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            customBorder: widget.circle ? const CircleBorder() : null,
+            borderRadius: radius,
+            onTap: widget.onTap,
+            onFocusChange: (f) => setState(() => _focused = f),
+            child: DecoratedBox(
+              position: DecorationPosition.foreground,
+              decoration: BoxDecoration(
+                shape: widget.circle ? BoxShape.circle : BoxShape.rectangle,
+                borderRadius: radius,
+                border: _focused
+                    ? Border.all(color: AppColors.primary, width: 2.5)
+                    : null,
+              ),
+              child: Center(widthFactor: 1, heightFactor: 1, child: widget.child),
+            ),
+          ),
         ),
       ),
     );
@@ -164,8 +223,11 @@ class _CenterScanButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return _FocusableTab(
+      label: 'Złap',
+      isSelected: isSelected,
       onTap: onTap,
+      circle: true,
       child: Container(
         width: 52,
         height: 52,

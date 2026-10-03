@@ -88,7 +88,11 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
         ),
         const SizedBox(height: 12),
         // Balance Card with Neon Gradient Header
-        Container(
+        Semantics(
+          container: true,
+          excludeSemantics: true,
+          label: 'Twoje aktywne saldo: ${g.points} punktów',
+          child: Container(
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
             gradient: const LinearGradient(
@@ -134,6 +138,7 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
               ),
             ],
           ),
+        ),
         ),
         const SizedBox(height: 10),
         Text(
@@ -223,14 +228,26 @@ class _RewardsScreenState extends ConsumerState<RewardsScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: g.points >= o.cost ? AppColors.primary : AppColors.surfaceElevated,
-                      foregroundColor: g.points >= o.cost ? const Color(0xFF090D12) : AppColors.textDim,
-                      minimumSize: const Size(80, 42),
+                  Semantics(
+                    container: true,
+                    button: true,
+                    enabled: g.points >= o.cost,
+                    excludeSemantics: true,
+                    label: g.points >= o.cost
+                        ? 'Aktywuj voucher ${o.partner} za ${o.cost} punktów'
+                        : 'Za mało punktów na voucher ${o.partner}, potrzeba ${o.cost} punktów',
+                    onTap: g.points >= o.cost ? () => _activate(o) : null,
+                    child: FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: g.points >= o.cost ? AppColors.primary : AppColors.surfaceElevated,
+                        foregroundColor: g.points >= o.cost ? const Color(0xFF090D12) : AppColors.textMuted,
+                        disabledBackgroundColor: AppColors.surfaceElevated,
+                        disabledForegroundColor: AppColors.textMuted,
+                        minimumSize: const Size(80, 48),
+                      ),
+                      onPressed: g.points >= o.cost ? () => _activate(o) : null,
+                      child: Text(g.points >= o.cost ? 'Aktywuj' : 'Za mało pkt'),
                     ),
-                    onPressed: g.points >= o.cost ? () => _activate(o) : null,
-                    child: Text(g.points >= o.cost ? 'Aktywuj' : 'Za mało pkt'),
                   ),
                 ],
               ),
@@ -266,7 +283,17 @@ class _VoucherTile extends StatelessWidget {
     final active = voucher.isActive(now);
     final left = formatCountdown(voucher.remaining(now));
 
-    return Container(
+    final name = offer?.partner ?? voucher.offerId;
+    final spoken = active
+        ? 'Voucher $name, kod ${voucher.code}, pozostało ${spokenRemaining(voucher.remaining(now))}'
+        : 'Voucher $name, kod ${voucher.code}, wygasł';
+
+    // Stable label (minute granularity) so the per-second countdown is not announced.
+    return Semantics(
+      container: true,
+      excludeSemantics: true,
+      label: spoken,
+      child: Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
         color: active ? AppColors.surfaceElevated : AppColors.surface,
@@ -327,6 +354,25 @@ class _VoucherTile extends StatelessWidget {
                 dense: true,
               ),
       ),
+    ),
     );
   }
+}
+
+/// Polish, minute-granular remaining time for screen readers.
+String spokenRemaining(Duration d) {
+  final totalMin = (d.inSeconds + 59) ~/ 60;
+  final h = totalMin ~/ 60;
+  final m = totalMin % 60;
+  String plural(int n, String one, String few, String many) {
+    if (n == 1) return '$n $one';
+    final l10 = n % 10, l100 = n % 100;
+    if (l10 >= 2 && l10 <= 4 && (l100 < 12 || l100 > 14)) return '$n $few';
+    return '$n $many';
+  }
+
+  return [
+    if (h > 0) plural(h, 'godzina', 'godziny', 'godzin'),
+    if (m > 0 || h == 0) plural(m, 'minuta', 'minuty', 'minut'),
+  ].join(' ');
 }
