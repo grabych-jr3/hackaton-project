@@ -33,6 +33,7 @@ void withProfile(NeedsProfile profile) => SharedPreferences.setMockInitialValues
 
 void main() {
   setUpAll(() => GoogleFonts.config.allowRuntimeFetching = false);
+  filterTests();
 
   testWidgets('first launch shows onboarding and saves chosen preset',
       (tester) async {
@@ -46,7 +47,7 @@ void main() {
     await tester.tap(find.text('Dalej'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Miejsca'), findsOneWidget);
+    expect(find.text('Lista'), findsOneWidget);
     final saved = await ProfileRepository().load();
     expect(saved?.preset, ProfilePreset.stroller);
   });
@@ -67,6 +68,7 @@ void main() {
     withProfile(NeedsProfile.wheelchair);
     await pumpApp(tester);
 
+    await openList(tester);
     await tester.tap(find.text('Zamek Królewski na Wawelu'));
     await tester.pumpAndSettle();
 
@@ -79,6 +81,7 @@ void main() {
     withProfile(NeedsProfile.wheelchair);
     await pumpApp(tester);
 
+    await openList(tester);
     await tester.tap(find.text('Sukiennice'));
     await tester.pumpAndSettle();
 
@@ -93,4 +96,33 @@ class _FilePlacesRepository implements PlacesRepository {
   Future<List<Place>> getPlaces() async => DemoPlacesRepository.parsePlaces(
         File(DemoPlacesRepository.assetPath).readAsStringSync(),
       );
+}
+
+Future<void> openList(WidgetTester tester) async {
+  await tester.tap(find.text('Lista'));
+  await tester.pumpAndSettle();
+}
+
+void filterTests() {
+  testWidgets('"Pasujące do mnie" hides unsuitable places', (tester) async {
+    withProfile(NeedsProfile.wheelchair);
+    await pumpApp(tester);
+    await openList(tester);
+    expect(find.text('Bazylika Mariacka'), findsOneWidget);
+
+    await tester.tap(find.text('Pasujące do mnie'));
+    await tester.pumpAndSettle();
+    expect(find.text('Bazylika Mariacka'), findsNothing);
+  });
+
+  testWidgets('search filters by name', (tester) async {
+    withProfile(NeedsProfile.wheelchair);
+    await pumpApp(tester);
+    await openList(tester);
+
+    await tester.enterText(find.byType(TextField), 'schindler');
+    await tester.pumpAndSettle();
+    expect(find.text('Fabryka Emalia Oskara Schindlera'), findsOneWidget);
+    expect(find.text('Sukiennice'), findsNothing);
+  });
 }

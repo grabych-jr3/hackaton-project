@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../data/models/place.dart';
-import '../../data/repositories/places_repository.dart';
+import '../map/place_filters.dart';
 import 'place_labels.dart';
 import 'place_providers.dart';
 import 'status_chip.dart';
@@ -15,11 +15,18 @@ class PlacesList extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return ref.watch(placesProvider).when(
+    return ref.watch(filteredPlacesProvider).when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (e, _) =>
               const Center(child: Text('Nie udało się wczytać miejsc.')),
-          data: (places) => ListView.separated(
+          data: (places) => places.isEmpty
+              ? const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text('Brak miejsc dla wybranych filtrów.'),
+                  ),
+                )
+              : ListView.separated(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
             itemCount: places.length + 1,
             separatorBuilder: (_, _) => const SizedBox(height: 10),
