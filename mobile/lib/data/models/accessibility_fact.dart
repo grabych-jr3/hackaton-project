@@ -53,7 +53,11 @@ class AccessibilityFact {
     this.confirmedAt,
     this.confirmations = 0,
     this.disputes = 0,
+    this.id,
   });
+
+  /// Backend id (null for bundled demo data); needed to confirm/dispute.
+  final String? id;
 
   /// Facts older than this are shown as "Nieaktualne".
   static const outdatedAfter = Duration(days: 365);
@@ -91,6 +95,7 @@ class AccessibilityFact {
 
   factory AccessibilityFact.fromJson(Map<String, dynamic> json) {
     return AccessibilityFact(
+      id: json['id']?.toString(),
       feature: Feature.fromJson(json['feature'] as String),
       value: json['value'] as Object,
       source: DataSource.fromJson(json['source'] as String),

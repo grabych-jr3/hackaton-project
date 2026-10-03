@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
+import '../../core/config.dart';
+import '../../data/api/api_client.dart';
 import '../../data/models/needs_profile.dart';
 import '../../data/models/place.dart';
 import '../../data/repositories/profile_repository.dart';
@@ -67,11 +69,14 @@ String formatDuration(double s) {
 }
 
 class RouteService {
-  RouteService({http.Client? client, this.apiKey = orsApiKey})
+  RouteService({http.Client? client, this.apiKey = orsApiKey, this.api})
       : _client = client ?? http.Client();
 
   final http.Client _client;
   final String apiKey;
+
+  /// When set (API mode), routes are planned by the backend `/routes`.
+  final ApiClient? api;
 
   Future<PlannedRoute> plan({
     required LatLng from,
@@ -79,6 +84,27 @@ class RouteService {
     required Place to,
     required NeedsProfile profile,
   }) async {
+    final api = this.api;
+    if (api != null) {
+      try {
+        final json = await api.post('/routes', body: {
+          'points': [
+            {'lat': from.latitude, 'lng': from.longitude},
+            {'lat': to.lat, 'lng': to.lng},
+          ],
+          'profile': {
+            'maxKerbCm': profile.maxKerbCm,
+            'minWidthCm': profile.minWidthCm,
+            'maxInclinePct': profile.maxInclinePct,
+          },
+        });
+        return parseApi(json as Map<String, dynamic>,
+            to: to, startLabel: startLabel);
+      } catch (_) {
+        return demoRoute(from, startLabel, to,
+            reason: 'Serwer niedostępny — pokazano trasę przykładową');
+      }
+    }
     if (apiKey.isEmpty) {
       return demoRoute(from, startLabel, to, reason: 'Brak klucza OpenRouteService');
     }
@@ -162,6 +188,35 @@ class RouteService {
     );
   }
 
+  /// Maps the backend `/routes` response (contract v2).
+  static PlannedRoute parseApi(Map<String, dynamic> json,
+      {required Place to, required String startLabel}) {
+    final fallback = json['fallback'] as bool? ?? false;
+    return PlannedRoute(
+      destination: to,
+      startLabel: startLabel,
+      points: [
+        for (final c in json['geometry'] as List? ?? const [])
+          LatLng(((c as List)[0] as num).toDouble(), (c[1] as num).toDouble()),
+      ],
+      distanceM: (json['distanceM'] as num?)?.toDouble() ?? 0,
+      durationS: (json['durationS'] as num?)?.toDouble() ?? 0,
+      segments: [
+        for (final s in json['segments'] as List? ?? const [])
+          RouteSegment(
+            instruction:
+                (s as Map<String, dynamic>)['instruction'] as String? ?? '',
+            distanceM: (s['distanceM'] as num?)?.toDouble() ?? 0,
+            warning: s['warning'] as String?,
+          ),
+      ],
+      isDemo: fallback,
+      fallbackReason: fallback
+          ? 'Serwer: trasa w linii prostej (OpenRouteService niedostępny)'
+          : null,
+    );
+  }
+
   /// Sample route used without a key or network. Clearly marked as demo.
   static PlannedRoute demoRoute(LatLng from, String startLabel, Place to,
       {String? reason}) {
@@ -215,7 +270,8 @@ class RouteService {
   }
 }
 
-final routeServiceProvider = Provider((ref) => RouteService());
+final routeServiceProvider = Provider((ref) =>
+    RouteService(api: useApi ? ref.watch(apiClientProvider) : null));
 
 class RouteNotifier extends Notifier<AsyncValue<PlannedRoute?>> {
   @override

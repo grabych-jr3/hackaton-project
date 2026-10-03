@@ -3,9 +3,11 @@ import 'dart:math';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/config.dart';
+import '../../data/api/api_client.dart';
 import 'game_models.dart';
+import 'game_repository.dart';
 
 abstract interface class GameCatalogRepository {
   Future<GameCatalog> load();
@@ -18,8 +20,29 @@ class DemoGameCatalogRepository implements GameCatalogRepository {
   Future<GameCatalog> load() async => GameCatalog.parse(await rootBundle.loadString(assetPath));
 }
 
-final gameCatalogRepositoryProvider =
-    Provider<GameCatalogRepository>((ref) => DemoGameCatalogRepository());
+/// `GET /game/catalog`; bundled demo catalog when the server is unreachable.
+class ApiGameCatalogRepository implements GameCatalogRepository {
+  ApiGameCatalogRepository(this._api, {required this.fallback});
+
+  final ApiClient _api;
+  final GameCatalogRepository fallback;
+
+  @override
+  Future<GameCatalog> load() async {
+    try {
+      final json = await _api.get('/game/catalog');
+      return GameCatalog.parse(jsonEncode(json));
+    } catch (e) {
+      if (!isNetworkError(e)) rethrow;
+      return fallback.load();
+    }
+  }
+}
+
+final gameCatalogRepositoryProvider = Provider<GameCatalogRepository>((ref) => useApi
+    ? ApiGameCatalogRepository(ref.watch(apiClientProvider),
+        fallback: DemoGameCatalogRepository())
+    : DemoGameCatalogRepository());
 
 final gameCatalogProvider = FutureProvider<GameCatalog>(
   (ref) => ref.watch(gameCatalogRepositoryProvider).load(),
@@ -30,41 +53,36 @@ final gameClockProvider = Provider<DateTime Function()>((ref) => DateTime.now);
 final gameRandomProvider =
     Provider<Random>((ref) => Random(DateTime.now().millisecondsSinceEpoch));
 
-class GameNotifier extends AsyncNotifier<GameState> {
-  static const _key = 'game_state';
+final gameRepositoryProvider = Provider<GameRepository>((ref) {
+  final local = LocalGameRepository(ref.watch(gameRandomProvider));
+  return useApi ? ApiGameRepository(ref.watch(apiClientProvider), local: local) : local;
+});
 
-  late GameRules _rules;
+class GameNotifier extends AsyncNotifier<GameState> {
+  late GameCatalog _catalog;
+  late GameRepository _repo;
 
   @override
   Future<GameState> build() async {
-    final catalog = await ref.watch(gameCatalogProvider.future);
-    _rules = GameRules(catalog, ref.watch(gameRandomProvider));
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_key);
-    if (raw == null) return GameState(points: catalog.initialPoints);
-    return GameState.fromJson(jsonDecode(raw) as Map<String, dynamic>);
-  }
-
-  Future<void> _save(GameState s) async {
-    state = AsyncData(s);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_key, jsonEncode(s.toJson()));
+    _catalog = await ref.watch(gameCatalogProvider.future);
+    _repo = ref.watch(gameRepositoryProvider);
+    return _repo.load(_catalog);
   }
 
   Future<CatchResult?> submitReport(BarrierReport report) async {
     final current = state.value;
     if (current == null) return null;
-    final (next, result) = _rules.submitReport(current, report);
-    await _save(next);
+    final (next, result) = await _repo.submitReport(_catalog, current, report);
+    state = AsyncData(next);
     return result;
   }
 
   Future<bool> activate(VoucherOffer offer) async {
     final current = state.value;
     if (current == null) return false;
-    final next = _rules.activate(current, offer, ref.read(gameClockProvider)());
+    final next = await _repo.activate(_catalog, current, offer, ref.read(gameClockProvider)());
     if (next == null) return false;
-    await _save(next);
+    state = AsyncData(next);
     return true;
   }
 }
