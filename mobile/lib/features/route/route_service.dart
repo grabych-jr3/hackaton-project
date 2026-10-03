@@ -10,6 +10,7 @@ import '../../data/api/api_client.dart';
 import '../../data/models/needs_profile.dart';
 import '../../data/models/place.dart';
 import '../../data/repositories/profile_repository.dart';
+import '../map/place_filters.dart';
 import 'route_start.dart';
 
 export 'route_start.dart' show rynekGlowny;
@@ -91,6 +92,7 @@ class PlannedRoute {
     this.barriers = const [],
     this.accessible = true,
     this.alternative,
+    this.note,
   });
 
   final Place destination;
@@ -119,6 +121,28 @@ class PlannedRoute {
   /// Wheelchair-accessible alternative (when [accessible] is false).
   final PlannedRoute? alternative;
 
+  /// Accessibility remark, e.g. "Brak trasy bez barier do samego celu —
+  /// ostatnie 40 m może wymagać pomocy". Shown only with barriers enabled.
+  final String? note;
+
+  /// The same route without any accessibility info (barriers, alternative,
+  /// notes) — shown when the 'Pasujące do mnie' chip is off.
+  PlannedRoute plain() => PlannedRoute(
+        destination: destination,
+        startLabel: startLabel,
+        points: points,
+        distanceM: distanceM,
+        durationS: durationS,
+        segments: [
+          for (final s in segments)
+            RouteSegment(instruction: s.instruction, distanceM: s.distanceM),
+        ],
+        isDemo: isDemo,
+        fallbackReason: fallbackReason,
+        relaxed: relaxed,
+        profile: profile,
+      );
+
   bool get isWheelchair => profile == 'wheelchair';
 
   String get kindLabel => isWheelchair ? 'Trasa dostępna' : 'Trasa piesza';
@@ -137,16 +161,51 @@ class PlannedRoute {
         durationS: durationS,
         segments: segments,
         isDemo: isDemo,
-        fallbackReason: fallbackReason ??
-            (alt == null
-                ? 'Nie udało się wyznaczyć trasy dostępnej (OpenRouteService)'
-                : null),
+        fallbackReason: fallbackReason,
         relaxed: relaxed,
         profile: profile,
         barriers: barriers,
         accessible: accessible,
         alternative: alt,
+        note: note ?? (alt == null ? noAlternativeNote : null),
       );
+
+  static const noAlternativeNote =
+      'Brak trasy bez barier do celu — odcinki z barierami mogą wymagać pomocy';
+}
+
+/// Barriers whose spans overlap or lie closer than [gapM] merged into one
+/// marker group (avoids stacked "!" markers).
+class BarrierGroup {
+  const BarrierGroup(this.fromIndex, this.toIndex, this.barriers);
+  final int fromIndex;
+  final int toIndex;
+  final List<RouteBarrier> barriers;
+
+  String get label => barriers.map((b) => b.label).toSet().join(', ');
+}
+
+List<BarrierGroup> groupBarriers(PlannedRoute r, {double gapM = 15}) {
+  if (r.points.isEmpty) return const [];
+  const distance = Distance();
+  final last = r.points.length - 1;
+  final sorted = [...r.barriers]
+    ..sort((a, b) => a.fromIndex.compareTo(b.fromIndex));
+  final out = <BarrierGroup>[];
+  for (final b in sorted) {
+    final from = b.fromIndex.clamp(0, last);
+    final to = b.toIndex.clamp(from, last);
+    final g = out.isEmpty ? null : out.last;
+    if (g != null &&
+        (from <= g.toIndex ||
+            distance(r.points[g.toIndex], r.points[from]) < gapM)) {
+      out[out.length - 1] =
+          BarrierGroup(g.fromIndex, max(g.toIndex, to), [...g.barriers, b]);
+    } else {
+      out.add(BarrierGroup(from, to, [b]));
+    }
+  }
+  return out;
 }
 
 String formatDistance(double m) => m >= 1000
@@ -479,6 +538,7 @@ class RouteService {
       alternative: alt is Map<String, dynamic>
           ? parseApi(alt, to: to, startLabel: startLabel)
           : null,
+      note: json['note'] as String?,
     );
   }
 
@@ -588,6 +648,11 @@ final routeServiceProvider = Provider((ref) =>
 /// true = map and panel show [PlannedRoute.alternative] instead of the
 /// walking route. Reset on every new plan / clear.
 final showAlternativeProvider = StateProvider<bool>((ref) => false);
+
+/// Wheelchair problem spots (barriers, alternative, notes) are shown only
+/// when the 'Pasujące do mnie' chip is on; otherwise a plain walking route.
+final routeBarriersEnabledProvider = Provider<bool>(
+    (ref) => ref.watch(placeFiltersProvider.select((f) => f.onlyMatching)));
 
 /// The route currently displayed (walking or its accessible alternative).
 PlannedRoute? displayedRoute(PlannedRoute? route, bool showAlternative) =>

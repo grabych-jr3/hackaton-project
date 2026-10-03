@@ -312,16 +312,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     bottom: 96,
                     child: _routeCollapsed
                         ? RouteCollapsedBar(
-                            // Show the route the user is looking at (walking or accessible).
-                            route: ref.watch(showAlternativeProvider) &&
-                                    route.value!.alternative != null
-                                ? route.value!.alternative!
-                                : route.value!,
+                            // Shows the route the user is looking at (walking or accessible).
+                            route: route.value!,
+                            showBarriers: ref.watch(routeBarriersEnabledProvider),
+                            showAlternative: ref.watch(showAlternativeProvider),
+                            onToggleAlternative: () => ref
+                                .read(showAlternativeProvider.notifier)
+                                .update((v) => !v),
                             onExpand: () => setState(() => _routeCollapsed = false),
                             onClear: () => ref.read(routeProvider.notifier).clear(),
                           )
                         : RoutePanel(
                             route: route.value!,
+                            showBarriers: ref.watch(routeBarriersEnabledProvider),
                             onClose: () => setState(() {
                               _routeCollapsed = true;
                               _selected = null;

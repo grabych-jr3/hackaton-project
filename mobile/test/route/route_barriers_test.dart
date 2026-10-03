@@ -134,6 +134,7 @@ void main() {
             route: route,
             onClose: () {},
             showAlternative: showAlt,
+            showBarriers: true,
             onToggleAlternative: () => setState(() => showAlt = !showAlt),
           ),
         ),
@@ -170,7 +171,9 @@ void main() {
       'alternative': null,
     }, to: wawel, startLabel: 'Rynek');
     await tester.pumpWidget(MaterialApp(
-        home: Scaffold(body: RoutePanel(route: route, onClose: () {}))));
+        home: Scaffold(
+            body: RoutePanel(
+                route: route, onClose: () {}, showBarriers: true))));
     expect(find.text(RoutePanel.noDataNote), findsOneWidget);
     expect(find.text('ORS timeout'), findsOneWidget);
     expect(find.textContaining('bariery'), findsNothing);
@@ -182,24 +185,145 @@ void main() {
         RouteService.parseApi(apiJson(), to: wawel, startLabel: 'Rynek');
     final lines = RouteLayers.polylines(route, false);
     final red = lines.where((l) => l.color == AppColors.bad).toList();
-    expect(red.length, 2);
-    expect(red.first.points.length, 2);
+    // Touching spans [1-2] + [2-3] are drawn as one merged span.
+    expect(red.length, 1);
+    expect(red.first.points.length, 3);
 
+    // Alternative on top; walking route dimmed with its red spans dimmed.
     final alt = RouteLayers.polylines(route, true);
     expect(alt.where((l) => l.color == AppColors.bad), isEmpty);
+    expect(alt.where((l) => l.color.r == AppColors.bad.r && l.color.a < 1),
+        isNotEmpty);
     expect(alt.last.points, route.alternative!.points);
 
     await tester.pumpWidget(MaterialApp(
       home: FlutterMap(
         options: const MapOptions(
             initialCenter: rynekGlowny, initialZoom: 15),
-        children: [RouteLayers(route: route)],
+        children: [RouteLayers(route: route, showBarriers: true)],
       ),
     ));
     await tester.pump();
+    // Touching steps + steep spans merged into one marker.
     expect(
         find.byWidgetPredicate((w) =>
-            w is Semantics && w.properties.label == 'Bariera: Schody'),
+            w is Semantics &&
+            w.properties.label == 'Bariera: Schody, Stromy odcinek'),
         findsOneWidget);
+  });
+
+  test('groupBarriers merges spans closer than 15 m, keeps distant ones', () {
+    final r = RouteService.parseApi({
+      'geometry': [
+        [50.0500, 19.9400],
+        [50.0501, 19.9400], // ~11 m
+        [50.0502, 19.9400], // ~11 m
+        [50.0503, 19.9400],
+        [50.0520, 19.9400], // ~190 m
+        [50.0521, 19.9400],
+      ],
+      'barriers': [
+        {'fromIndex': 0, 'toIndex': 1, 'type': 'steps', 'label': 'Schody'},
+        {'fromIndex': 2, 'toIndex': 3, 'type': 'steps', 'label': 'Schody'},
+        {'fromIndex': 4, 'toIndex': 5, 'type': 'surface', 'label': 'Bruk'},
+      ],
+      'accessible': false,
+    }, to: wawel, startLabel: 'Rynek');
+    final g = groupBarriers(r);
+    expect(g.length, 2);
+    expect([g[0].fromIndex, g[0].toIndex], [0, 3]);
+    expect(g[0].barriers.length, 2);
+    expect(g[1].label, 'Bruk');
+  });
+
+  testWidgets('chip off: layer is a plain walking line, no markers',
+      (tester) async {
+    final route =
+        RouteService.parseApi(apiJson(), to: wawel, startLabel: 'Rynek');
+    final lines = RouteLayers.polylines(route, true, showBarriers: false);
+    expect(lines.where((l) => l.color == AppColors.bad), isEmpty);
+    expect(lines.last.points, route.points, reason: 'walking, not alternative');
+    await tester.pumpWidget(MaterialApp(
+      home: FlutterMap(
+        options: const MapOptions(initialCenter: rynekGlowny, initialZoom: 15),
+        children: [RouteLayers(route: route, showAlternative: true)],
+      ),
+    ));
+    await tester.pump();
+    expect(find.byIcon(Icons.priority_high_rounded), findsNothing);
+  });
+
+  testWidgets('chip off: panel shows no barrier info and no toggle',
+      (tester) async {
+    final json = apiJson()..['note'] = 'Brak trasy bez barier';
+    json['segments'] = [
+      {'instruction': 'Schodami', 'distanceM': 20, 'warning': 'Schody'},
+    ];
+    final route = RouteService.parseApi(json, to: wawel, startLabel: 'Rynek');
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(body: RoutePanel(route: route, onClose: () {}))));
+    expect(find.text('Trasa piesza · 1,5 km · 18 min'), findsOneWidget);
+    expect(find.textContaining('bariery'), findsNothing);
+    expect(find.textContaining('Pokaż trasę dostępną'), findsNothing);
+    expect(find.text('Stromy odcinek (ok. 12%)'), findsNothing);
+    expect(find.text(RoutePanel.accessibleNote), findsNothing);
+    expect(find.text('Brak trasy bez barier'), findsNothing);
+    expect(find.textContaining('⚠'), findsNothing);
+    expect(find.text('Schodami'), findsOneWidget);
+  });
+
+  testWidgets('chip on: panel shows the alternative note', (tester) async {
+    final json = apiJson();
+    (json['alternative'] as Map<String, dynamic>)['note'] =
+        'Brak trasy bez barier do samego celu — ostatnie 40 m może wymagać pomocy';
+    final route = RouteService.parseApi(json, to: wawel, startLabel: 'Rynek');
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: RoutePanel(
+                route: route,
+                onClose: () {},
+                showBarriers: true,
+                showAlternative: true,
+                onToggleAlternative: () {}))));
+    expect(find.textContaining('ostatnie 40 m może wymagać pomocy'),
+        findsOneWidget);
+    expect(find.text(RoutePanel.walkingButton), findsOneWidget);
+  });
+
+  testWidgets('collapsed bar exposes the alternative toggle only with chip on',
+      (tester) async {
+    final route =
+        RouteService.parseApi(apiJson(), to: wawel, startLabel: 'Rynek');
+    var showAlt = false;
+    var barriers = true;
+    late StateSetter set;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: StatefulBuilder(builder: (context, setState) {
+          set = setState;
+          return RouteCollapsedBar(
+            route: route,
+            onExpand: () {},
+            onClear: () {},
+            showBarriers: barriers,
+            showAlternative: showAlt,
+            onToggleAlternative: () => setState(() => showAlt = !showAlt),
+          );
+        }),
+      ),
+    ));
+    expect(find.textContaining('1,5 km · bariery: 1'), findsOneWidget);
+    await tester.tap(find.text('Trasa dostępna: +300 m'));
+    await tester.pump();
+    expect(showAlt, isTrue);
+    expect(find.textContaining('1,8 km'), findsOneWidget);
+    expect(find.text(RouteCollapsedBar.walkingLabel), findsOneWidget);
+
+    set(() => barriers = false);
+    await tester.pump();
+    expect(find.textContaining('Trasa dostępna'), findsNothing);
+    expect(find.text(RouteCollapsedBar.walkingLabel), findsNothing);
+    expect(find.textContaining('1,5 km'), findsOneWidget);
+    expect(find.textContaining('bariery'), findsNothing);
   });
 }
