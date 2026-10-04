@@ -450,7 +450,8 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
 - `placeId` (если есть) существует → иначе `404`;
 - лимит 30 фото в сутки на пользователя → `429`.
 
-Ответ `202 { "catchId": "…", "status": "PENDING" }`.
+Ответ `202 { "catchId": "…", "status": "PENDING", "createdAt": "2026-10-04T10:00:00Z", "thumbnailUrl": "/catches/{id}/photo" }`.
+Фото сохраняется сразу, анализ идёт в фоне — приложение не блокирует пользователя, результаты забирает через `GET /catches?since=…`.
 
 `GET /catches/{id}` (auth, только владелец, чужой → `404`) — Flutter опрашивает раз в 1–2 с:
 ```json
@@ -465,6 +466,21 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
 - `status`: `PENDING` / `OK` / `REJECTED` / `FAILED`; `reason` — польский текст для пользователя при `REJECTED`/`FAILED`.
 - `species`, `points` (= `sellValue` вида), `state` (как `GET /game/state`) — только при `OK`, иначе `null`. `awarded` всегда 0.
 - **Поимка по фото очков не даёт** (как `/game/reports`): +1 в `user_species`, очки — только через `POST /game/sell`.
+
+`GET /catches?since=<ISO>&limit=20` (auth) — мои уловы, новые сверху (`created_at DESC`), `limit` 1…100 (по умолчанию 20). Ответ — JSON-массив:
+```json
+[ { "catchId": "…", "status": "OK", "reason": null,
+    "species": { "id": "kerbik", "name": "Kerbik", "emoji": "🧱", "rarity": "rare" }, "points": 25,
+    "result": { "steps": 3, "…": "…" },
+    "createdAt": "2026-10-04T10:00:00Z", "analyzedAt": "2026-10-04T10:00:05Z",
+    "placeId": "osm:node/1", "thumbnailUrl": "/catches/…/photo" } ]
+```
+- без `since` — все (до `limit`); с `since` — только `analyzedAt > since` **или** `status = PENDING` (опрос «что завершилось с прошлой проверки»: клиент хранит время последнего опроса).
+- `species`/`points`/`result` — `null`, пока не `OK` (у `REJECTED`/`FAILED` `result` может быть заполнен).
+
+`GET /catches/{id}/photo` (auth, только владелец, чужой → `404`) — байты сохранённого фото, `Content-Type` `image/jpeg` или `image/png` (по расширению файла), `Cache-Control: private, max-age=86400`. `thumbnailUrl` — относительный путь к нему (префикс `/api/v1` добавляет клиент, нужен `Authorization`).
+
+Таймаут анализа: `@Scheduled` каждые 30 с переводит уловы в `PENDING` дольше 2 мин в `FAILED` с `reason = "Analiza nie powiodła się — spróbuj ponownie"` (vision недоступен). Обновление идёт только `WHERE status = 'PENDING'`, а listener берёт строку `FOR UPDATE` и тоже обрабатывает только `PENDING`, — гонки нет: кто первый, тот и задаёт итоговый статус, поздний `photo.analyzed` игнорируется.
 
 ### 5.7 Профиль, награды (P1)
 `GET /me` → `{ "userId", "points", "catches": 14, "barriersMapped": 23, "exploredCells": 38, "totalCells": 400 }`
