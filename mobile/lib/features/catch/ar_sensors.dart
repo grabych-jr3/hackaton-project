@@ -1,14 +1,17 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter_compass/flutter_compass.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_rotation_sensor/flutter_rotation_sensor.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:sensors_plus/sensors_plus.dart';
+import 'package:sensors_plus/sensors_plus.dart' hide SensorInterval;
 
 import 'ar_math.dart';
+import 'ar_projection.dart';
 
 /// Raw accelerometer stream (injectable for tests). Used only for camera
 /// tilt; heading comes from the OS fused compass ([arCompassSourceProvider]).
@@ -231,3 +234,158 @@ class ArLiveState {
 
 /// Tests turn the camera plugin off (overlay renders on black).
 final arCameraEnabledProvider = Provider<bool>((_) => true);
+
+/// Where the AR rotation matrix comes from (debug overlay).
+enum ArRotationSource {
+  /// OS fused rotation vector (Android TYPE_ROTATION_VECTOR / iOS CoreMotion).
+  os,
+
+  /// Fallback: compass yaw + accelerometer gravity.
+  fallback,
+}
+
+/// A 3×3 rotation matrix (9 values, row-major, world = M·device; world X=East,
+/// Y=magnetic North, Z=Up) tagged with its [source].
+class ArRotationMatrix extends ListBase<double> {
+  ArRotationMatrix(List<double> values, this.source)
+      : assert(values.length == 9),
+        _m = List.unmodifiable(values);
+
+  final List<double> _m;
+  final ArRotationSource source;
+
+  @override
+  int get length => 9;
+  @override
+  set length(int _) => throw UnsupportedError('fixed');
+  @override
+  double operator [](int i) => _m[i];
+  @override
+  void operator []=(int i, double v) => throw UnsupportedError('read-only');
+}
+
+/// Raw OS rotation matrices from `flutter_rotation_sensor` (device frame).
+///
+/// Layout verified in the 0.2.0 source: the Android plugin forwards the
+/// TYPE_ROTATION_VECTOR quaternion; `Quaternion.toRotationMatrix()` is the
+/// standard row-major device→world matrix (same as
+/// `SensorManager.getRotationMatrixFromVector`), `Matrix3[i]` row-major.
+final arOsRotationProvider = Provider<Stream<List<double>>>((_) {
+  if (!RotationSensor.isPlatformSupported) return const Stream.empty();
+  // App is locked to portrait → device frame == display frame.
+  RotationSensor.coordinateSystem = CoordinateSystem.device();
+  RotationSensor.samplingPeriod = SensorInterval.gameInterval;
+  var boosted = false;
+  return RotationSensor.orientationStream.map((e) {
+    if (!boosted) {
+      // 0.2.0 Android ignores the period until a listener exists
+      // (FlutterRotationSensorPlugin.onMethodCall): re-apply it once.
+      boosted = true;
+      RotationSensor.samplingPeriod = SensorInterval.gameInterval;
+    }
+    final m = e.rotationMatrix;
+    return [for (var i = 0; i < 9; i++) m[i]];
+  });
+});
+
+/// No OS rotation event for this long → compass+gravity fallback.
+const arRotationFallbackAfter = Duration(milliseconds: 1500);
+
+/// OS rotation matrices, falling back to compass yaw + gravity when the OS
+/// stream is silent for [timeout] (or errors). Switches back to the OS source
+/// as soon as it produces events again.
+Stream<ArRotationMatrix> rotationWithFallback({
+  required Stream<List<double>> os,
+  required Stream<Vec3> accel,
+  required Stream<CompassReading> compass,
+  required bool compassMagnetic,
+  Duration timeout = arRotationFallbackAfter,
+}) {
+  late final StreamController<ArRotationMatrix> ctrl;
+  StreamSubscription<List<double>>? osSub;
+  final fbSubs = <StreamSubscription<dynamic>>[];
+  Timer? timer;
+  Vec3? g;
+  double? heading;
+
+  void stopFallback() {
+    for (final s in fbSubs) {
+      s.cancel();
+    }
+    fbSubs.clear();
+  }
+
+  void emitFallback() {
+    final gg = g, h = heading;
+    if (gg == null || h == null) return;
+    // Matrix north must be magnetic, like the rotation vector.
+    final magH = compassMagnetic ? h : h - krakowDeclinationDeg;
+    final m = matrixFromGravityHeading(gg.x, gg.y, gg.z, magH);
+    if (m != null) ctrl.add(ArRotationMatrix(m, ArRotationSource.fallback));
+  }
+
+  void startFallback() {
+    if (fbSubs.isNotEmpty || ctrl.isClosed) return;
+    try {
+      fbSubs.add(accel.listen((a) {
+        final p = g;
+        const k = 0.2;
+        g = p == null
+            ? a
+            : Vec3(p.x + k * (a.x - p.x), p.y + k * (a.y - p.y),
+                p.z + k * (a.z - p.z));
+        emitFallback();
+      }, onError: (Object _) {}));
+      fbSubs.add(compass.listen((c) {
+        final h = c.heading;
+        if (h == null || h.isNaN) return;
+        heading = h;
+        emitFallback();
+      }, onError: (Object _) {}));
+    } catch (_) {
+      // No sensors at all (web/desktop).
+    }
+  }
+
+  void arm() {
+    timer?.cancel();
+    timer = Timer(timeout, startFallback);
+  }
+
+  ctrl = StreamController<ArRotationMatrix>(
+    onListen: () {
+      arm();
+      try {
+        osSub = os.listen((m) {
+          if (m.length != 9) return;
+          stopFallback();
+          arm();
+          ctrl.add(m is ArRotationMatrix
+              ? m
+              : ArRotationMatrix(m, ArRotationSource.os));
+        }, onError: (Object _) {
+          timer?.cancel();
+          startFallback();
+        });
+      } catch (_) {
+        startFallback();
+      }
+    },
+    onCancel: () async {
+      timer?.cancel();
+      stopFallback();
+      await osSub?.cancel();
+    },
+  );
+  return ctrl.stream;
+}
+
+/// Device rotation matrix for the AR projection (9 values; tagged
+/// [ArRotationMatrix] in production). Override in tests with a fake stream.
+final arRotationMatrixProvider = Provider<Stream<List<double>>>((ref) =>
+    rotationWithFallback(
+      os: ref.watch(arOsRotationProvider),
+      accel: ref.watch(arSensorStreamsProvider).accel,
+      compass: ref.watch(arCompassSourceProvider),
+      compassMagnetic: ref.watch(arCompassIsMagneticProvider),
+    ));
