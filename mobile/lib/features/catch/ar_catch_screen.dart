@@ -27,9 +27,15 @@ enum CatchExit {
 /// → poll the vision result. Falls back to the survey when the camera, the
 /// location or the AI is unavailable — the analysis is never faked.
 class ArCatchScreen extends ConsumerStatefulWidget {
-  const ArCatchScreen({super.key, this.placeId});
+  const ArCatchScreen(
+      {super.key, this.placeId, this.spawnId, this.speciesEmoji, this.speciesName});
 
   final String? placeId;
+
+  /// Map spawn being caught (the sprite shows its creature).
+  final String? spawnId;
+  final String? speciesEmoji;
+  final String? speciesName;
 
   @override
   ConsumerState<ArCatchScreen> createState() => _ArCatchScreenState();
@@ -66,7 +72,7 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     const emojis = ['🐉', '🦉', '🦊', '🐺', '🦎', '🐸', '🦋', '🐾'];
-    _spriteEmoji = emojis[Random().nextInt(emojis.length)];
+    _spriteEmoji = widget.speciesEmoji ?? emojis[Random().nextInt(emojis.length)];
     _bob = AnimationController(vsync: this, duration: const Duration(milliseconds: 1800));
     _initCamera();
     _listenSensors();
@@ -188,6 +194,7 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
         lat: _lat!,
         lng: _lng!,
         placeId: widget.placeId,
+        spawnId: widget.spawnId,
       );
     } catch (_) {
       response = null;

@@ -1,0 +1,18 @@
+{
+  "dataset": "DANE PRZYKŁADOWE — demonstracyjne stworki wokół centrum Krakowa",
+  "isDemo": true,
+  "spawns": [
+    {"id": "demo-s1", "lat": 50.0619, "lng": 19.9369, "speciesId": "golab", "name": "Gołąb", "emoji": "🐦", "rarity": "common", "kind": "demo"},
+    {"id": "demo-s2", "lat": 50.0612, "lng": 19.9381, "speciesId": "lis", "name": "Lis", "emoji": "🦊", "rarity": "common", "kind": "demo"},
+    {"id": "demo-s3", "lat": 50.0641, "lng": 19.9411, "speciesId": "jez", "name": "Jeż", "emoji": "🦔", "rarity": "common", "kind": "demo"},
+    {"id": "demo-s4", "lat": 50.0655, "lng": 19.9455, "speciesId": "golab", "name": "Gołąb", "emoji": "🐦", "rarity": "common", "kind": "demo"},
+    {"id": "demo-s5", "lat": 50.0570, "lng": 19.9330, "speciesId": "sowa", "name": "Sowa", "emoji": "🦉", "rarity": "rare", "kind": "demo"},
+    {"id": "demo-s6", "lat": 50.0538, "lng": 19.9360, "speciesId": "wydra", "name": "Wydra", "emoji": "🦦", "rarity": "rare", "kind": "demo"},
+    {"id": "demo-s7", "lat": 50.0515, "lng": 19.9450, "speciesId": "lis", "name": "Lis", "emoji": "🦊", "rarity": "common", "kind": "demo"},
+    {"id": "demo-s8", "lat": 50.0500, "lng": 19.9480, "speciesId": "bocian", "name": "Bocian", "emoji": "🕊️", "rarity": "epic", "kind": "demo"},
+    {"id": "demo-s9", "lat": 50.0603, "lng": 19.9310, "speciesId": "jez", "name": "Jeż", "emoji": "🦔", "rarity": "common", "kind": "demo"},
+    {"id": "demo-s10", "lat": 50.0665, "lng": 19.9340, "speciesId": "niedzwiedz", "name": "Niedźwiedź", "emoji": "🐻", "rarity": "epic", "kind": "demo"},
+    {"id": "demo-s11", "lat": 50.0545, "lng": 19.9352, "speciesId": "smok", "name": "Smok", "emoji": "🐉", "rarity": "legendary", "kind": "demo"},
+    {"id": "demo-s12", "lat": 50.0628, "lng": 19.9425, "speciesId": "sowa", "name": "Sowa", "emoji": "🦉", "rarity": "rare", "kind": "demo", "caughtByMe": true}
+  ]
+}

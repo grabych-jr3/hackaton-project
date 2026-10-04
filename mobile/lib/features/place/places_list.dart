@@ -11,7 +11,10 @@ import 'status_chip.dart';
 
 /// Text alternative to the map (WCAG): every place with its verdict.
 class PlacesList extends ConsumerWidget {
-  const PlacesList({super.key});
+  const PlacesList({super.key, this.leading});
+
+  /// Optional section shown under the header (e.g. nearby creatures).
+  final Widget? leading;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -29,9 +32,12 @@ class PlacesList extends ConsumerWidget {
                 )
               : ListView.separated(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-            itemCount: places.length + 1,
+            itemCount: places.length + 1 + (leading == null ? 0 : 1),
             separatorBuilder: (_, _) => const SizedBox(height: 10),
-            itemBuilder: (context, i) {
+            itemBuilder: (context, index) {
+              // Optional leading section comes first, then the places header.
+              if (leading != null && index == 0) return leading!;
+              final i = leading == null ? index : index - 1;
               if (i == 0) {
                 return Row(
                   children: [
