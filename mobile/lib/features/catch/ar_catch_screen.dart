@@ -7,14 +7,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../data/repositories/catch_repository.dart';
 import '../game/game_models.dart';
+import '../map/place_filters.dart' show formatDistance;
+import '../route/route_start.dart';
+import '../spawns/spawn.dart';
+import '../spawns/spawn_providers.dart';
 import 'ar_projection.dart';
 import 'ar_sensors.dart';
-import '../spawns/spawn_providers.dart';
 import 'gps_smoother.dart';
 import 'pending_catches.dart';
 
@@ -26,14 +30,20 @@ const photoSavedMessage =
 const barrierOnlyMessage =
     'Zdjęcie bariery zapisane — stworek jest za daleko, nie został złapany';
 
-/// Hint in free mode without any spawn nearby.
-const noSpawnsHint = 'Brak stworków w pobliżu — postaw stworka na mapie';
+/// Hint before the camera has its own GPS fix.
+const waitingGpsHint = 'Czekam na GPS…';
+
+/// Prefix of the hint shown when no spawn is within [arShowRadiusM].
+const noSpawnsHint = 'Brak stworków w promieniu 60 m';
 
 /// Creature is caught only within this distance (m).
 const arCatchDistanceM = 20.0;
 
-/// Free mode looks for spawns within this radius (m).
-const arFreeModeRadiusM = 50.0;
+/// All spawns within this radius (m) are drawn in the camera.
+const arShowRadiusM = 60.0;
+
+/// Spawns are refetched this often while the camera is open.
+const arSpawnRefreshInterval = Duration(seconds: 30);
 
 /// shared_preferences key of the tuned horizontal FOV.
 const arHFovPrefKey = 'ar_hfov_deg';
@@ -47,17 +57,30 @@ enum CatchExit {
   collection,
 }
 
-/// What the AR sprite is anchored to.
-class _ArTarget {
-  const _ArTarget(this.id, this.lat, this.lng, this.emoji);
-  final String? id;
+/// A creature drawn in AR.
+class _ArItem {
+  const _ArItem(this.id, this.lat, this.lng, this.emoji, this.name,
+      {this.caught = false});
+  final String id;
   final double lat, lng;
-  final String? emoji;
+  final String emoji;
+  final String name;
+  final bool caught;
 }
 
-/// AR catch screen: live camera preview with the creature sprite projected in
-/// full 3D through the OS rotation matrix (see ar_projection.dart). Take a
-/// picture → background upload via [pendingCatchesProvider] → back to /map.
+/// One projected creature for the current frame.
+class _Shown {
+  _Shown(this.item, this.proj, this.pos);
+  final _ArItem item;
+  final ArProjection proj;
+  final ({double x, double y})? pos;
+}
+
+/// AR catch screen: live camera preview with every creature within
+/// [arShowRadiusM] projected in full 3D through the OS rotation matrix (see
+/// ar_projection.dart). Spawns are matched against the camera's OWN smoothed
+/// GPS fix. Take a picture → background upload via [pendingCatchesProvider]
+/// → back to /map.
 class ArCatchScreen extends ConsumerStatefulWidget {
   const ArCatchScreen({
     super.key,
@@ -73,13 +96,13 @@ class ArCatchScreen extends ConsumerStatefulWidget {
 
   final String? placeId;
 
-  /// Map spawn being caught (the sprite shows its creature).
+  /// Map spawn being caught (initial target).
   final String? spawnId;
   final String? speciesEmoji;
   final String? speciesName;
 
-  /// Geographic anchor of the creature; both set = geo-anchored AR mode.
-  /// Otherwise free mode: the nearest spawn within 50 m is shown.
+  /// Geographic anchor of the route-param creature; both set = it is always
+  /// shown (even if the spawn list does not contain it).
   final double? spawnLat;
   final double? spawnLng;
 
@@ -103,15 +126,19 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
 
   final List<StreamSubscription<dynamic>> _subs = [];
   final _gps = GpsSmoother();
-  final _screen = ScreenSmoother();
+  final Map<String, ScreenSmoother> _smoothers = {};
+  final Map<String, ({double e, double n, double u})> _goodEnu = {};
+  final Map<String, String> _goodEnuKey = {};
   List<double>? _m;
   double? _lat, _lng;
   double? _rawAccuracy;
   bool _gpsFailed = false;
-  ({double e, double n, double u})? _goodEnu;
-  String? _goodEnuFor; // target key the cached ENU belongs to
-  ArProjection? _proj;
-  ({double x, double y})? _pos;
+  List<_Shown> _shown = const [];
+  String? _selectedId;
+  Timer? _refreshTimer;
+  DateTime? _spawnsFetchedAt;
+  String? _spawnsError;
+  bool _placing = false;
 
   double _hFov = arDefaultHFovDeg;
   bool _capturing = false;
@@ -130,14 +157,69 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
       (_cam?.value.isInitialized ?? false);
   bool get _canCapture => _cameraReady && _lat != null && !_capturing;
 
-  _ArTarget? get _target {
-    if (widget.geoMode) {
-      return _ArTarget(
-          widget.spawnId, widget.spawnLat!, widget.spawnLng!, widget.speciesEmoji);
-    }
-    final s = ref.read(nearestSpawnProvider(arFreeModeRadiusM));
-    return s == null ? null : _ArTarget(s.id, s.lat, s.lng, s.emoji);
+  List<Spawn> get _spawns {
+    final now = DateTime.now();
+    return [
+      for (final s in ref.read(spawnsProvider).value ?? const <Spawn>[])
+        if (s.expiresAt.isAfter(now)) s,
+    ];
   }
+
+  double _distTo(double lat, double lng) {
+    final e = enuOffset(_lat!, _lng!, lat, lng);
+    return sqrt(e.e * e.e + e.n * e.n);
+  }
+
+  /// Every creature within [arShowRadiusM] of the camera's fix (the
+  /// route-param creature is always included).
+  List<_ArItem> get _items {
+    if (_lat == null || _lng == null) return const [];
+    final out = <_ArItem>[];
+    if (widget.geoMode) {
+      out.add(_ArItem(widget.spawnId ?? 'route', widget.spawnLat!,
+          widget.spawnLng!, widget.speciesEmoji ?? _fallbackEmoji,
+          widget.speciesName ?? 'Stworek'));
+    }
+    for (final s in _spawns) {
+      if (out.any((i) => i.id == s.id)) continue;
+      if (_distTo(s.lat, s.lng) > arShowRadiusM) continue;
+      out.add(_ArItem(s.id, s.lat, s.lng, s.emoji, s.name, caught: s.caughtByMe));
+    }
+    return out;
+  }
+
+  /// Target: tapped sprite > route-param spawn > nearest not-caught spawn.
+  _Shown? get _target {
+    if (_shown.isEmpty) return null;
+    for (final id in [_selectedId, if (widget.geoMode) widget.spawnId ?? 'route']) {
+      if (id == null) continue;
+      for (final s in _shown) {
+        if (s.item.id == id) return s;
+      }
+    }
+    final sorted = [..._shown]..sort((a, b) {
+        if (a.item.caught != b.item.caught) return a.item.caught ? 1 : -1;
+        return a.proj.distanceM.compareTo(b.proj.distanceM);
+      });
+    return sorted.first;
+  }
+
+  /// Nearest spawn beyond the show radius (for the "none nearby" hint).
+  ({Spawn spawn, double dist, double bearing})? get _nearestFar {
+    if (_lat == null || _lng == null) return null;
+    ({Spawn spawn, double dist, double bearing})? best;
+    for (final s in _spawns) {
+      final e = enuOffset(_lat!, _lng!, s.lat, s.lng);
+      final d = sqrt(e.e * e.e + e.n * e.n);
+      if (best == null || d < best.dist) {
+        best = (spawn: s, dist: d, bearing: (atan2(e.e, e.n) * 180 / pi + 360) % 360);
+      }
+    }
+    return best;
+  }
+
+  double? get _yawTrue =>
+      _m == null ? null : ((cameraYawDeg(_m!) + arDeclinationDeg) % 360 + 360) % 360;
 
   @override
   void initState() {
@@ -153,6 +235,16 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     }
     _loadFov();
     _listen();
+    // Fresh spawn list on open and every 30 s while the camera is open.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refreshSpawns());
+    _refreshTimer = Timer.periodic(arSpawnRefreshInterval, (_) => _refreshSpawns());
+  }
+
+  void _refreshSpawns() {
+    if (!mounted) return;
+    try {
+      ref.invalidate(spawnsProvider);
+    } catch (_) {}
   }
 
   @override
@@ -244,6 +336,7 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
         final p = _gps.position!;
         _lat = p.lat;
         _lng = p.lng;
+        _shareFix(p.lat, p.lng, pos.accuracy);
         _recompute();
       }, onError: (Object _) {
         if (mounted && _lat == null) setState(() => _gpsFailed = true);
@@ -253,56 +346,87 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     }
   }
 
-  /// User→target ENU; when the GPS error exceeds the distance the last good
+  /// The rest of the app (map, nearest spawn, route start) benefits from the
+  /// camera's fix; the spawn bbox is widened when the fix is outside it.
+  void _shareFix(double lat, double lng, double accuracy) {
+    try {
+      ref
+          .read(userLocationProvider.notifier)
+          .set(UserLocation(LatLng(lat, lng), accuracyM: accuracy));
+      final bbox = ref.read(spawnBboxProvider);
+      if (!bbox.contains(lat, lng)) {
+        const d = 0.01; // ~1 km
+        ref
+            .read(spawnBboxProvider.notifier)
+            .set(SpawnBbox(lng - d, lat - d, lng + d, lat + d));
+      }
+    } catch (_) {}
+  }
+
+  /// User→item ENU; when the GPS error exceeds the distance the last good
   /// ENU is kept (the sprite never re-centres on GPS noise).
-  ({double e, double n, double u})? _enuFor(_ArTarget t) {
-    final lat = _lat, lng = _lng;
-    if (lat == null || lng == null) return null;
-    final key = '${t.id}|${t.lat}|${t.lng}';
-    if (_goodEnuFor != key) {
-      _goodEnu = null;
-      _goodEnuFor = key;
+  ({double e, double n, double u}) _enuFor(_ArItem t) {
+    final key = '${t.lat}|${t.lng}';
+    if (_goodEnuKey[t.id] != key) {
+      _goodEnu.remove(t.id);
+      _goodEnuKey[t.id] = key;
     }
-    final enu = enuOffset(lat, lng, t.lat, t.lng);
+    final enu = enuOffset(_lat!, _lng!, t.lat, t.lng);
     final dist = sqrt(enu.e * enu.e + enu.n * enu.n);
     final err = _gps.position?.errorM ?? 0;
-    if (err > dist && _goodEnu != null) return _goodEnu;
-    return _goodEnu = enu;
+    final good = _goodEnu[t.id];
+    if (err > dist && good != null) return good;
+    return _goodEnu[t.id] = enu;
   }
 
   void _recompute() {
     if (!mounted) return;
-    final t = _target;
     final m = _m;
-    final enu = t == null ? null : _enuFor(t);
-    ArProjection? proj;
-    if (m != null && enu != null) {
+    final items = _items;
+    final shown = <_Shown>[];
+    if (m != null) {
       final size = MediaQuery.sizeOf(context);
       final fov = croppedFov(
           hFovDeg: _hFov,
           vFovDeg: vFovForHFov(_hFov),
           screenW: size.width,
           screenH: size.height);
-      proj = projectTarget(
-          m: m,
-          enu: enu,
-          screenW: size.width,
-          screenH: size.height,
-          hFovDeg: fov.h,
-          vFovDeg: fov.v);
+      for (final it in items) {
+        final proj = projectTarget(
+            m: m,
+            enu: _enuFor(it),
+            screenW: size.width,
+            screenH: size.height,
+            hFovDeg: fov.h,
+            vFovDeg: fov.v);
+        final pos = _smoothers.putIfAbsent(it.id, ScreenSmoother.new).add(proj);
+        shown.add(_Shown(it, proj, pos));
+      }
     }
-    setState(() {
-      _proj = proj;
-      _pos = proj == null ? null : _screen.add(proj);
-    });
+    setState(() => _shown = shown);
     _updateLiveHint();
   }
 
+  /// Turn direction towards a true bearing given the camera yaw.
+  String _turnTo(double bearing) {
+    final yaw = _yawTrue;
+    if (yaw == null) return '';
+    final delta = ((bearing - yaw + 540) % 360) - 180;
+    if (delta.abs() < 20) return ' (przed Tobą)';
+    return delta < 0 ? ' (w lewo)' : ' (w prawo)';
+  }
+
   String get _hint {
-    if (_lat == null) return 'Czekam na GPS…';
-    if (_target == null) return noSpawnsHint;
-    final p = _proj;
-    if (p == null) return 'Czekam na czujniki orientacji…';
+    if (_lat == null) return waitingGpsHint;
+    final t = _target;
+    if (t == null) {
+      if (_items.isNotEmpty) return 'Czekam na czujniki orientacji…';
+      final far = _nearestFar;
+      if (far == null) return '$noSpawnsHint — postaw stworka tutaj';
+      return '$noSpawnsHint — najbliższy: ${far.spawn.name}, '
+          '${formatDistance(far.dist)}${_turnTo(far.bearing)}';
+    }
+    final p = t.proj;
     final d = p.distanceM.round();
     if (!p.visible) {
       return 'Obróć się w ${p.edge < 0 ? 'lewo' : 'prawo'} — stworek $d m';
@@ -331,6 +455,27 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     }
   }
 
+  Future<void> _spawnHere() async {
+    final lat = _lat, lng = _lng;
+    if (lat == null || lng == null || _placing) return;
+    setState(() => _placing = true);
+    try {
+      final s = await ref
+          .read(spawnsProvider.notifier)
+          .spawnHere(LatLng(lat, lng), headingDeg: _yawTrue);
+      if (!mounted) return;
+      _selectedId = s.id;
+      _recompute();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+            content: Text('Nie udało się postawić stworka — spróbuj ponownie.')));
+      }
+    } finally {
+      if (mounted) setState(() => _placing = false);
+    }
+  }
+
   Future<void> _capture() async {
     final cam = _cam;
     final repo = ref.read(catchRepositoryProvider);
@@ -343,9 +488,8 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
       Navigator.of(context).pop(CatchExit.survey);
       return;
     }
-    final target = _target;
-    final enu = target == null ? null : _enuFor(target);
-    final dist = enu == null ? null : sqrt(enu.e * enu.e + enu.n * enu.n);
+    final target = _target?.item;
+    final dist = target == null ? null : _distTo(target.lat, target.lng);
     final caught = target != null && dist != null && dist <= arCatchDistanceM;
     final message =
         target != null && !caught ? barrierOnlyMessage : photoSavedMessage;
@@ -364,7 +508,7 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
             lat: _lat!,
             lng: _lng!,
             placeId: widget.placeId,
-            spawnId: caught ? target.id : null,
+            spawnId: caught && target.id != 'route' ? target.id : null,
           );
       messenger.hideCurrentSnackBar();
       messenger.showSnackBar(SnackBar(content: Text(message)));
@@ -403,43 +547,83 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     for (final s in _subs) {
       s.cancel();
     }
+    _refreshTimer?.cancel();
     _liveHintTimer?.cancel();
     _cam?.dispose();
     _bob.dispose();
     super.dispose();
   }
 
+  Widget _sprite(_Shown s, bool isTarget, bool reduceMotion) {
+    final px = s.proj.size * (isTarget ? 1 : 0.8);
+    final pos = s.pos!;
+    Widget emoji = Text(s.item.emoji,
+        key: isTarget ? const ValueKey('ar-sprite') : null,
+        style: TextStyle(fontSize: px * 0.8, height: 1));
+    if (!reduceMotion) {
+      emoji = AnimatedBuilder(
+        animation: _bob,
+        builder: (_, child) => Transform.translate(
+            offset: Offset(0, -6 + 12 * _bob.value), child: child),
+        child: emoji,
+      );
+    }
+    final label = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: isTarget ? AppColors.primary : Colors.black87,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text('${s.item.name} · ${s.proj.distanceM.round()} m',
+          maxLines: 1,
+          style: TextStyle(
+              color: isTarget ? const Color(0xFF090D12) : Colors.white,
+              fontSize: 11,
+              fontWeight: isTarget ? FontWeight.w800 : FontWeight.w500)),
+    );
+    return Positioned(
+      key: ValueKey('ar-item-${s.item.id}'),
+      left: pos.x - px / 2,
+      top: pos.y - px / 2,
+      width: px,
+      height: px,
+      child: Semantics(
+        button: true,
+        selected: isTarget,
+        label: '${s.item.name}, ${s.proj.distanceM.round()} m',
+        excludeSemantics: true,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {
+            _selectedId = s.item.id;
+            _recompute();
+          },
+          child: OverflowBox(
+            maxWidth: double.infinity,
+            maxHeight: double.infinity,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [emoji, const SizedBox(height: 2), label],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   List<Widget> _arLayer(Size size, bool reduceMotion) {
-    final p = _proj;
-    final pos = _pos;
     final out = <Widget>[];
     final t = _target;
-    if (p != null && pos != null && p.visible) {
-      final px = p.size;
-      Widget sprite = Text(t?.emoji ?? _fallbackEmoji,
-          key: const ValueKey('ar-sprite'),
-          style: TextStyle(fontSize: px * 0.8, height: 1));
-      if (!reduceMotion) {
-        sprite = AnimatedBuilder(
-          animation: _bob,
-          builder: (_, child) => Transform.translate(
-              offset: Offset(0, -6 + 12 * _bob.value), child: child),
-          child: sprite,
-        );
+    // Target last = drawn on top.
+    for (final s in _shown) {
+      if (s != t && s.proj.visible && s.pos != null) {
+        out.add(_sprite(s, false, reduceMotion));
       }
-      out.add(Positioned(
-        left: pos.x - px / 2,
-        top: pos.y - px / 2,
-        width: px,
-        height: px,
-        child: ExcludeSemantics(
-            child: OverflowBox(
-                maxWidth: double.infinity,
-                maxHeight: double.infinity,
-                child: Center(child: sprite))),
-      ));
-    } else if (p != null && !p.visible) {
-      final left = p.edge < 0;
+    }
+    if (t != null && t.proj.visible && t.pos != null) {
+      out.add(_sprite(t, true, reduceMotion));
+    } else if (t != null && !t.proj.visible) {
+      final left = t.proj.edge < 0;
       out.add(Positioned(
         left: left ? 8 : null,
         right: left ? null : 8,
@@ -451,6 +635,22 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
               size: 56),
         ),
       ));
+    } else if (t == null && _lat != null && _items.isEmpty) {
+      final far = _nearestFar;
+      final yaw = _yawTrue;
+      if (far != null && yaw != null) {
+        out.add(Positioned(
+          left: size.width / 2 - 28,
+          top: size.height / 2 - 28,
+          child: ExcludeSemantics(
+            child: Transform.rotate(
+              angle: (far.bearing - yaw) * pi / 180,
+              child: const Icon(Icons.navigation,
+                  key: ValueKey('ar-far-arrow'), color: Colors.white, size: 56),
+            ),
+          ),
+        ));
+      }
     }
     if (_showDebug) out.add(_debugPanel());
     return out;
@@ -460,13 +660,18 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     String f(double? v, [int d = 0]) =>
         v == null || v.isNaN ? '-' : v.toStringAsFixed(d);
     final m = _m;
-    final p = _proj;
+    final t = _target;
+    final p = t?.proj;
     final source = m is ArRotationMatrix
         ? (m.source == ArRotationSource.os ? 'OS rotation vector' : 'kompas + grawitacja')
         : m == null
             ? 'brak'
             : 'zewnętrzne';
-    final yaw = m == null ? null : (cameraYawDeg(m) + arDeclinationDeg) % 360;
+    final at = _spawnsFetchedAt;
+    final fetched = at == null
+        ? '-'
+        : '${at.hour.toString().padLeft(2, '0')}:${at.minute.toString().padLeft(2, '0')}:'
+            '${at.second.toString().padLeft(2, '0')}';
     return Positioned(
       top: 100,
       left: 12,
@@ -481,13 +686,16 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
           children: [
             Text(
               'źródło obrotu: $source\n'
-              'yaw (prawdziwa płn.): ${f(yaw)}°\n'
+              'yaw (prawdziwa płn.): ${f(_yawTrue)}°\n'
               'dx/dy/dz: ${f(p?.dx, 1)} / ${f(p?.dy, 1)} / ${f(p?.dz, 1)} m\n'
               'głębokość: ${f(p?.depth, 1)} m\n'
-              'sx/sy: ${f(_pos?.x ?? p?.sx)} / ${f(_pos?.y ?? p?.sy)} px\n'
+              'sx/sy: ${f(t?.pos?.x ?? p?.sx)} / ${f(t?.pos?.y ?? p?.sy)} px\n'
               'dystans: ${f(p?.distanceM, 1)} m\n'
               'GPS surowy: ±${f(_rawAccuracy, 1)} m\n'
               'GPS wygładzony: ±${f(_gps.position?.errorM, 1)} m\n'
+              'stworki wczytane: ${_spawns.length}, w 60 m: ${_items.length}\n'
+              'cel: ${t?.item.id ?? '-'}\n'
+              'pobrano: $fetched${_spawnsError == null ? '' : ' · błąd: $_spawnsError'}\n'
               'hFov: ${f(_hFov)}°',
               style: const TextStyle(color: Colors.white, fontSize: 12),
             ),
@@ -512,12 +720,16 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
 
   @override
   Widget build(BuildContext context) {
-    // Free mode: re-project when the nearest spawn changes.
-    if (!widget.geoMode) {
-      ref.listen(nearestSpawnProvider(arFreeModeRadiusM), (_, _) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => _recompute());
-      });
-    }
+    // Re-project when the spawn list changes; remember fetch time/error.
+    ref.listen<AsyncValue<List<Spawn>>>(spawnsProvider, (_, next) {
+      if (next.hasError) {
+        _spawnsError = '${next.error}';
+      } else if (next.hasValue && !next.isLoading) {
+        _spawnsFetchedAt = DateTime.now();
+        _spawnsError = null;
+      }
+      WidgetsBinding.instance.addPostFrameCallback((_) => _recompute());
+    });
     final cam = _cam;
     if (_error != null) {
       return _Unavailable(message: _error!);
@@ -535,6 +747,7 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     final size = MediaQuery.sizeOf(context);
     final preview = cam?.value.previewSize;
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final noneNearby = _lat != null && _items.isEmpty;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -618,6 +831,16 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
                         excludeSemantics: true,
                         child: _Hint(_hint),
                       ),
+                    if (noneNearby && !_capturing) ...[
+                      const SizedBox(height: 8),
+                      FilledButton.icon(
+                        key: const ValueKey('ar-spawn-here'),
+                        style: FilledButton.styleFrom(minimumSize: const Size(48, 48)),
+                        onPressed: _placing ? null : _spawnHere,
+                        icon: const Icon(Icons.add_location_alt),
+                        label: const Text('Postaw stworka tutaj'),
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     Semantics(
                       button: true,

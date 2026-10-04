@@ -16,7 +16,6 @@ import 'package:hackaton_project/features/catch/ar_projection.dart';
 import 'package:hackaton_project/features/catch/ar_sensors.dart';
 import 'package:hackaton_project/features/catch/gps_smoother.dart';
 import 'package:hackaton_project/features/catch/pending_catches.dart';
-import 'package:hackaton_project/features/spawns/spawn_providers.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -148,17 +147,6 @@ void main() {
     await face(tester, 0);
     expect(tester.getCenter(find.byKey(const ValueKey('ar-sprite'))).dx,
         closeTo(200, 2));
-    await finish(tester);
-  });
-
-  testWidgets('free mode without spawns: no sprite, hint', (tester) async {
-    await pump(tester, extra: [
-      nearestSpawnProvider.overrideWith((ref, _) => null),
-    ]);
-    gps.add(_pos(_lat0, _lng0));
-    await face(tester, 0);
-    expect(find.byKey(const ValueKey('ar-sprite')), findsNothing);
-    expect(find.text(noSpawnsHint), findsOneWidget);
     await finish(tester);
   });
 

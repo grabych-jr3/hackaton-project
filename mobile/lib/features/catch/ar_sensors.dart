@@ -354,7 +354,10 @@ Stream<ArRotationMatrix> rotationWithFallback({
 
   ctrl = StreamController<ArRotationMatrix>(
     onListen: () {
+      // Compass+gravity from the very first frame: sprites never wait for
+      // the OS rotation vector (dropped as soon as it produces events).
       arm();
+      startFallback();
       try {
         osSub = os.listen((m) {
           if (m.length != 9) return;
