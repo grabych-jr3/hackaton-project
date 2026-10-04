@@ -53,7 +53,15 @@ public class CatchService {
         this.photosDir = Paths.get(photosDir).toAbsolutePath();
     }
 
-    public record SubmitResult(String catchId, String status) {}
+    public static final String REASON_STALE = "Analiza nie powiodła się — spróbuj ponownie";
+    static final Duration STALE_AFTER = Duration.ofMinutes(2);
+    static final int MAX_LIST_LIMIT = 100;
+
+    public record SubmitResult(String catchId, String status, Instant createdAt, String thumbnailUrl) {}
+
+    public record Photo(byte[] bytes, String contentType) {}
+
+    static String thumbnailUrl(Object catchId) { return "/catches/" + catchId + "/photo"; }
 
     public SubmitResult submit(UUID userId, MultipartFile photo, double lat, double lng, UUID spawnId,
                                String placeId, Instant takenAt) throws IOException {
@@ -97,9 +105,9 @@ public class CatchService {
         String photoPath = file.toString().replace('\\', '/');
 
         jdbc.update("""
-                INSERT INTO catch_record (id, user_id, spawn_id, place_id, geom, photo_path, status)
-                VALUES (?, ?, ?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326), ?, 'PENDING')
-                """, id, userId, spawnId, placeId, lng, lat, photoPath);
+                INSERT INTO catch_record (id, user_id, spawn_id, place_id, geom, photo_path, status, created_at)
+                VALUES (?, ?, ?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326), ?, 'PENDING', ?)
+                """, id, userId, spawnId, placeId, lng, lat, photoPath, java.sql.Timestamp.from(now));
 
         var event = new Events.PhotoSubmitted(id.toString(), photoPath, lat, lng,
                 spawnId == null ? null : spawnId.toString(), placeId, now);
@@ -110,7 +118,7 @@ public class CatchService {
                         + "WHERE id = ? AND status = 'PENDING'", id);
             }
         });
-        return new SubmitResult(id.toString(), "PENDING");
+        return new SubmitResult(id.toString(), "PENDING", now, thumbnailUrl(id));
     }
 
     /** BACKEND.md 6.3 - idempotent: anything not PENDING is ignored. */
@@ -262,6 +270,74 @@ public class CatchService {
         JsonNode facts = readTree((String) r.get("created_facts"));
         out.put("createdFacts", facts == null ? List.of() : facts);
         return out;
+    }
+
+    /** My catches, newest first. {@code since}: only analyzed after it, plus everything still PENDING. */
+    public List<Map<String, Object>> list(UUID userId, Instant since, int limit) {
+        int lim = Math.max(1, Math.min(limit, MAX_LIST_LIMIT));
+        String sql = """
+                SELECT id, status, reason, species_id, points, ai_result::text AS ai_result, created_at, analyzed_at, place_id
+                FROM catch_record WHERE user_id = ?""";
+        List<Object> args = new ArrayList<>(List.of(userId));
+        if (since != null) {
+            sql += " AND (analyzed_at > ? OR status = 'PENDING')";
+            args.add(java.sql.Timestamp.from(since));
+        }
+        sql += " ORDER BY created_at DESC, id DESC LIMIT ?";
+        args.add(lim);
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> r : jdbc.queryForList(sql, args.toArray())) {
+            Optional<GameRules.Species> species = game.species((String) r.get("species_id"));
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("catchId", r.get("id").toString());
+            m.put("status", r.get("status"));
+            m.put("reason", r.get("reason"));
+            m.put("species", species.orElse(null));
+            m.put("points", species.map(s -> s.rarity().sellValue()).orElse(null));
+            m.put("result", readTree((String) r.get("ai_result")));
+            m.put("createdAt", toInstant(r.get("created_at")));
+            m.put("analyzedAt", toInstant(r.get("analyzed_at")));
+            m.put("placeId", r.get("place_id"));
+            m.put("thumbnailUrl", thumbnailUrl(r.get("id")));
+            out.add(m);
+        }
+        return out;
+    }
+
+    /** Owner-only photo bytes; other users get 404. */
+    public Photo photo(UUID catchId, UUID userId) {
+        List<String> paths = jdbc.queryForList("SELECT photo_path FROM catch_record WHERE id = ? AND user_id = ?",
+                String.class, catchId, userId);
+        if (paths.isEmpty()) throw ApiException.notFound("Catch " + catchId + " not found");
+        String path = paths.get(0);
+        try {
+            byte[] bytes = Files.readAllBytes(Paths.get(path));
+            return new Photo(bytes, path.toLowerCase(Locale.ROOT).endsWith(".png") ? "image/png" : "image/jpeg");
+        } catch (IOException e) {
+            throw ApiException.notFound("Photo for catch " + catchId + " not found");
+        }
+    }
+
+    /**
+     * Vision down: PENDING longer than 2 min becomes FAILED. The WHERE status = 'PENDING' guard plus the row
+     * lock taken by applyAnalysis (FOR UPDATE) make this race-free with the Kafka listener.
+     */
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 30_000, initialDelay = 30_000)
+    public int failStalePending() {
+        int n = jdbc.update("""
+                UPDATE catch_record SET status = 'FAILED', reason = ?, analyzed_at = now()
+                WHERE status = 'PENDING' AND created_at < ?""",
+                REASON_STALE, java.sql.Timestamp.from(Instant.now().minus(STALE_AFTER)));
+        if (n > 0) log.info("Marked {} stale PENDING catches as FAILED", n);
+        return n;
+    }
+
+    private static Instant toInstant(Object o) {
+        if (o == null) return null;
+        if (o instanceof java.sql.Timestamp t) return t.toInstant();
+        if (o instanceof java.time.OffsetDateTime t) return t.toInstant();
+        if (o instanceof Instant i) return i;
+        return Instant.parse(o.toString());
     }
 
     private JsonNode readTree(String s) {
