@@ -36,7 +36,11 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/api/v1/auth/**", "/api/v1/health", "/api/v1/health/**", "/health", "/api/v1/admin/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/routes").permitAll()
+<<<<<<< Updated upstream
                         .requestMatchers(HttpMethod.GET, "/api/v1/game/catalog", "/api/v1/spawns").permitAll()
+=======
+                        .requestMatchers(HttpMethod.GET, "/api/v1/game/catalog", "/api/v1/crowd").permitAll()
+>>>>>>> Stashed changes
                         // read-only place data is public so the map works before login
                         .requestMatchers(HttpMethod.GET, "/api/v1/places", "/api/v1/places/**").permitAll()
                         .requestMatchers("/swagger-ui.html", "/swagger-ui/**", "/v3/api-docs/**", "/error").permitAll()

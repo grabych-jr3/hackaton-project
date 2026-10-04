@@ -15,6 +15,7 @@ class PlaceFilters {
     this.onlyMatching = false,
     this.toilet = false,
     this.benches = false,
+    this.avoidCrowds = false,
   });
 
   final String query;
@@ -24,17 +25,22 @@ class PlaceFilters {
   final bool toilet;
   final bool benches;
 
+  /// Shows the crowd layer and asks the backend for routes avoiding crowds.
+  final bool avoidCrowds;
+
   PlaceFilters copyWith({
     String? query,
     bool? onlyMatching,
     bool? toilet,
     bool? benches,
+    bool? avoidCrowds,
   }) =>
       PlaceFilters(
         query: query ?? this.query,
         onlyMatching: onlyMatching ?? this.onlyMatching,
         toilet: toilet ?? this.toilet,
         benches: benches ?? this.benches,
+        avoidCrowds: avoidCrowds ?? this.avoidCrowds,
       );
 }
 
