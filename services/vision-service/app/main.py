@@ -8,8 +8,9 @@ from fastapi import FastAPI, File, UploadFile
 
 from .analyzer import build_analyzer
 from .config import get_settings
-from .kafka_worker import run_worker
+from .kafka_worker import WorkerState, run_worker
 from .pipeline import analyze_bytes
+from .rotation import COOLDOWN
 from .schema import PhotoAnalyzed
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -20,11 +21,13 @@ log = logging.getLogger("vision")
 async def lifespan(app: FastAPI):
     settings = get_settings()
     app.state.settings = settings
-    app.state.analyzer = build_analyzer(settings.gemini_api_key, settings.gemini_model)
+    app.state.analyzer = build_analyzer(settings.gemini_api_key, settings.gemini_models)
+    COOLDOWN.seconds = settings.model_cooldown
+    app.state.worker = WorkerState()
     stop = asyncio.Event()
     task = None
     if settings.kafka_enabled:
-        task = asyncio.create_task(run_worker(app.state.analyzer, settings, stop))
+        task = asyncio.create_task(run_worker(app.state.analyzer, settings, stop, app.state.worker))
     else:
         log.info("KAFKA_ENABLED=false -> consumer not started")
     yield
@@ -40,8 +43,18 @@ app = FastAPI(title="vision-service", lifespan=lifespan)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "analyzer": app.state.analyzer.name,
-            "kafka": app.state.settings.kafka_enabled}
+    analyzer = app.state.analyzer
+    w = app.state.worker.snapshot()
+    return {
+        "status": "ok",
+        "analyzer": analyzer.name,
+        "kafka": app.state.settings.kafka_enabled,
+        "kafkaConnected": w["connected"],
+        "assignedPartitions": w["assignedPartitions"],
+        "lastMessageAt": w["lastMessageAt"],
+        "consumer": w,
+        "models": COOLDOWN.status(list(getattr(analyzer, "models", []))),
+    }
 
 
 @app.post("/analyze", response_model=PhotoAnalyzed)

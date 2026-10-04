@@ -556,9 +556,11 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
 { "catchId": "…", "status": "OK",
   "result": { "steps": 4, "kerbRange": ">7", "widthRange": null, "ramp": false,
               "handrail": true, "obstacles": [], "difficulty": 7.4, "confidence": 0.82 },
-  "phash": "c3a1…", "reason": null }
+  "phash": "c3a1…", "reason": null, "model": "gemini-3.7-flash" }
 ```
 `status`: `OK` / `REJECTED` (размытое фото, дубликат, на фото нет барьера) / `FAILED` (ошибка Gemini).
+
+`model` — необязательное дополнительное поле (обратно совместимо, central-api его игнорирует): какая модель Gemini дала ответ (`null` при `FAILED`/отказе препроцессинга, `"mock"` для MOCK-анализатора). vision-service перебирает модели из `GEMINI_MODELS` (503/429/404/таймаут → следующая модель, не более 2 проходов, ≤ 60 с на фото); если все модели недоступны — `FAILED` с `reason = "AI chwilowo niedostępne — spróbuj ponownie za chwilę"`.
 
 ### 6.3 Обработка в central-api (`@KafkaListener`, в одной транзакции)
 1. Найти `catch_record` (`FOR UPDATE`). Если статус уже не `PENDING`, **выйти** (идемпотентность: повтор сообщения ничего не меняет).

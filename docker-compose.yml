@@ -54,6 +54,7 @@ services:
       KAFKA_ENABLED: ${KAFKA_ENABLED:-true}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-}
+      GEMINI_MODELS: ${GEMINI_MODELS:-}
       PHOTOS_DIR: /photos
     ports: ["8000:8000"]
     volumes: [photos:/photos]
