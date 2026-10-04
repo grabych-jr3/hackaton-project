@@ -61,6 +61,29 @@ public class OrsClient {
         }
     }
 
+    /**
+     * ORS Snap API: nearest point on the {profile} graph within radiusM of (lat,lng).
+     * @return {lat, lng, snappedDistanceM} or null if nothing within radius
+     * @throws OrsException on any ORS / transport failure
+     */
+    public double[] snap(String profile, double lat, double lng, int radiusM) {
+        try {
+            JsonNode res = client.post().uri("/v2/snap/{profile}/json", profile)
+                    .header("Authorization", apiKey)
+                    .contentType(MediaType.APPLICATION_JSON).accept(MediaType.APPLICATION_JSON)
+                    .body(Map.of("locations", java.util.List.of(java.util.List.of(lng, lat)), "radius", radiusM))
+                    .retrieve().body(JsonNode.class);
+            JsonNode loc = res == null ? null : res.path("locations").path(0);
+            if (loc == null || loc.isNull() || loc.isMissingNode() || !loc.path("location").isArray()) return null;
+            return new double[]{loc.path("location").path(1).asDouble(), loc.path("location").path(0).asDouble(),
+                    loc.path("snapped_distance").asDouble(0)};
+        } catch (RestClientResponseException e) {
+            throw new OrsException(null, e.getStatusCode().value(), e.getStatusText());
+        } catch (Exception e) {
+            throw new OrsException(null, 0, e.getClass().getSimpleName());
+        }
+    }
+
     private static Integer errorCode(JsonNode n) {
         JsonNode c = n.path("error").path("code");
         return c.isNumber() ? c.asInt() : null;
