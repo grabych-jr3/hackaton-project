@@ -11,7 +11,7 @@ void main() {
   final catalog = loadCatalog();
 
   test('catalog parses and filters unverified partners', () {
-    expect(catalog.species, hasLength(8));
+    expect(catalog.species, hasLength(10));
     expect(catalog.offers.any((o) => !o.verifiedAccess), isTrue);
     expect(catalog.verifiedOffers.every((o) => o.verifiedAccess), isTrue);
   });

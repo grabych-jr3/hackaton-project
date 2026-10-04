@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../game/creature_image.dart';
 import '../game/game_models.dart';
 import 'spawn.dart';
 import 'spawn_providers.dart';
@@ -25,6 +26,7 @@ void openSpawnCamera(BuildContext context, Spawn spawn) {
   context.push(Uri(path: '/catch/camera', queryParameters: {
     'spawnId': spawn.id,
     'emoji': spawn.emoji,
+    'speciesId': spawn.speciesId,
     'name': spawn.name,
     'spawnLat': spawn.lat.toString(),
     'spawnLng': spawn.lng.toString(),
@@ -80,7 +82,7 @@ class SpawnMarker extends StatelessWidget {
               ],
       ),
       alignment: Alignment.center,
-      child: Text(spawn.emoji, style: const TextStyle(fontSize: 22)),
+      child: CreatureImage(speciesId: spawn.speciesId, emoji: spawn.emoji, size: 30),
     );
     return Semantics(
       button: true,
@@ -140,7 +142,8 @@ class SpawnSheet extends StatelessWidget {
           children: [
             Row(children: [
               ExcludeSemantics(
-                  child: Text(spawn.emoji, style: const TextStyle(fontSize: 44))),
+                  child: CreatureImage(
+                      speciesId: spawn.speciesId, emoji: spawn.emoji, size: 64)),
               const SizedBox(width: 14),
               Expanded(
                 child: Column(
@@ -230,8 +233,10 @@ class _NearbySpawnsSectionState extends ConsumerState<NearbySpawnsSection> {
                   ExcludeSemantics(
                       child: Opacity(
                     opacity: d.spawn.caughtByMe ? 0.4 : 1,
-                    child: Text(d.spawn.emoji,
-                        style: const TextStyle(fontSize: 26)),
+                    child: CreatureImage(
+                        speciesId: d.spawn.speciesId,
+                        emoji: d.spawn.emoji,
+                        size: 40),
                   )),
                   const SizedBox(width: 12),
                   Expanded(

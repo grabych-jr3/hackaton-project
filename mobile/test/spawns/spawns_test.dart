@@ -118,7 +118,7 @@ void main() {
     final s = await repo.spawnHere(here.latitude, here.longitude,
         speciesId: 'smok');
     expect(s.kind, 'user');
-    expect(s.name, 'Smok');
+    expect(s.name, 'Smok Wawelski');
     expect(const Distance()(here, s.point), lessThanOrEqualTo(25));
     final all = await repo.getSpawns(SpawnBbox.krakow);
     expect(all.map((x) => x.id), contains(s.id));
@@ -129,9 +129,9 @@ void main() {
     final semantics = tester.ensureSemantics();
     await _pumpApp(tester, _FileSpawns());
     final smok = find.bySemanticsLabel(
-        RegExp(r'^Stworek: Smok, legendarny, .* od Rynku Głównego$'));
+        RegExp(r'^Stworek: Smok Wawelski, legendarny, .* od Rynku Głównego$'));
     expect(smok, findsOneWidget);
-    expect(find.bySemanticsLabel(RegExp(r'^Stworek: Sowa, .*już złapany$')),
+    expect(find.bySemanticsLabel(RegExp(r'^Stworek: Motylosmok, .*już złapany$')),
         findsOneWidget);
 
     await tester.tap(smok);

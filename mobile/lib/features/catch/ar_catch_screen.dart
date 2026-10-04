@@ -13,6 +13,7 @@ import 'package:sensors_plus/sensors_plus.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../data/repositories/catch_repository.dart';
+import '../game/creature_image.dart';
 import '../game/game_models.dart';
 import 'ar_math.dart';
 import 'ar_sensors.dart';
@@ -41,6 +42,7 @@ class ArCatchScreen extends ConsumerStatefulWidget {
     this.placeId,
     this.spawnId,
     this.speciesEmoji,
+    this.speciesId,
     this.speciesName,
     this.spawnLat,
     this.spawnLng,
@@ -53,6 +55,7 @@ class ArCatchScreen extends ConsumerStatefulWidget {
   /// Map spawn being caught (the sprite shows its creature).
   final String? spawnId;
   final String? speciesEmoji;
+  final String? speciesId;
   final String? speciesName;
 
   /// Geographic anchor of the creature; both set = geo-anchored AR mode.
@@ -383,9 +386,11 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
         final x = screenX(rel, size.width, fovDeg: _fovDeg);
         final y = screenY(_fusion.elevation ?? targetElevationDeg, size.width,
             size.height, fovDeg: _fovDeg);
-        Widget sprite = Text(_spriteEmoji,
+        Widget sprite = CreatureImage(
             key: const ValueKey('ar-sprite'),
-            style: TextStyle(fontSize: px * 0.8, height: 1));
+            speciesId: widget.speciesId,
+            emoji: _spriteEmoji,
+            size: px);
         if (!reduceMotion) {
           sprite = AnimatedBuilder(
             animation: _bob,
@@ -497,7 +502,8 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
                     child: child,
                   ),
                   child: Center(
-                    child: Text(_spriteEmoji, style: const TextStyle(fontSize: 56)),
+                    child: CreatureImage(
+                        speciesId: widget.speciesId, emoji: _spriteEmoji, size: 120),
                   ),
                 ),
               ),
@@ -746,7 +752,7 @@ Future<CatchExit?> showCatchOutcomeDialog(
           title: Column(
             children: [
               ExcludeSemantics(
-                child: Text(species.emoji, style: const TextStyle(fontSize: 48)),
+                child: CreatureImage(speciesId: species.id, emoji: species.emoji, size: 96),
               ),
               const SizedBox(height: 8),
               Text(

@@ -41,6 +41,7 @@ GoRouter buildAppRouter({String initialLocation = '/map'}) => GoRouter(
         placeId: state.uri.queryParameters['placeId'],
         spawnId: state.uri.queryParameters['spawnId'],
         speciesEmoji: state.uri.queryParameters['emoji'],
+        speciesId: state.uri.queryParameters['speciesId'],
         speciesName: state.uri.queryParameters['name'],
         spawnLat: double.tryParse(state.uri.queryParameters['spawnLat'] ?? ''),
         spawnLng: double.tryParse(state.uri.queryParameters['spawnLng'] ?? ''),

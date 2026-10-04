@@ -87,7 +87,7 @@ class SpawnServiceTest {
         verify(jdbc).update(contains("'user'"), any(), eq(19.93), eq(50.06), eq("sowa"), eq("rare"), any(), eq(user));
         JsonNode j = om.valueToTree(dto);
         assertEquals("sowa", j.get("speciesId").asText());
-        assertEquals("Sowa", j.get("name").asText());
+        assertEquals("Motylosmok", j.get("name").asText());
         assertEquals("rare", j.get("rarity").asText());
         assertEquals("user", j.get("kind").asText());
         assertEquals(50.06, j.get("lat").asDouble());

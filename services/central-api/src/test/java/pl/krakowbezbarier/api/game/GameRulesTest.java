@@ -71,7 +71,7 @@ class GameRulesTest {
     @Test
     void catalogSpeciesHaveSellValueAndDescription() throws Exception {
         JsonNode raw = om.readTree(new ClassPathResource("game/game.json").getInputStream());
-        assertEquals(8, raw.get("species").size());
+        assertEquals(10, raw.get("species").size());
         for (JsonNode s : raw.get("species")) {
             Rarity r = Rarity.valueOf(s.get("rarity").asText());
             assertEquals(r.sellValue(), s.get("sellValue").asInt(), s.get("id").asText());

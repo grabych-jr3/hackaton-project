@@ -468,7 +468,7 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
 { "catchId": "…", "status": "OK", "reason": null,
   "result": { "steps": 5, "kerbRange": null, "widthRange": null, "ramp": false,
               "handrail": false, "obstacles": [], "difficulty": 10.0, "confidence": 1.0 },
-  "species": { "id": "niedzwiedz", "name": "Niedźwiedź", "emoji": "🐻", "rarity": "epic" },
+  "species": { "id": "niedzwiedz", "name": "Lawowa Salamandra", "emoji": "🔥", "rarity": "epic" },
   "points": 60, "awarded": 0,
   "state": { "points": 120, "caught": { "niedzwiedz": 1 }, "vouchers": [] },
   "createdFacts": [] }
