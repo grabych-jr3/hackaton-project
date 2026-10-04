@@ -11,18 +11,19 @@ import 'package:hackaton_project/features/shell/home_shell.dart';
 import 'package:hackaton_project/data/api/api_client.dart';
 import 'package:hackaton_project/data/repositories/catch_repository.dart';
 import 'package:hackaton_project/features/catch/ar_catch_screen.dart';
+import 'package:hackaton_project/features/catch/ar_heading_shim.dart';
+import 'package:hackaton_project/features/catch/ar_sensors.dart';
+import 'package:hackaton_project/features/catch/gps_smoother.dart';
 import 'package:hackaton_project/features/catch/pending_catches.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:hackaton_project/features/catch/ar_math.dart';
-import 'package:hackaton_project/features/catch/ar_sensors.dart';
 
-Position _pos(double lat, double lng) => Position(
+Position _pos(double lat, double lng, {double accuracy = 4, int sec = 0}) => Position(
       latitude: lat,
       longitude: lng,
-      timestamp: DateTime(2026),
-      accuracy: 4,
+      timestamp: DateTime(2026).add(Duration(seconds: sec)),
+      accuracy: accuracy,
       altitude: 0,
       altitudeAccuracy: 0,
       heading: 0,
@@ -31,43 +32,57 @@ Position _pos(double lat, double lng) => Position(
       speedAccuracy: 0,
     );
 
+const _lat0 = 52.0, _lng0 = 21.0;
+
+/// Latitude [m] metres north of the user.
+double _north(double m) => geoOffset(_lat0, _lng0, 0, m).lat;
+
 void main() {
-  late StreamController<Vec3> accel, mag, gyro;
+  late StreamController<ArHeading> heading;
+  late StreamController<double> pitch;
   late StreamController<Position> gps;
 
-  Future<void> pump(WidgetTester tester, {required double spawnLat}) async {
+  List<Override> streamOverrides() {
+    heading = StreamController();
+    pitch = StreamController();
+    gps = StreamController();
+    return [
+      arHeadingProvider.overrideWithValue(heading.stream),
+      arPitchProvider.overrideWithValue(pitch.stream),
+      arPositionStreamProvider.overrideWithValue(() => gps.stream),
+    ];
+  }
+
+  void setUpView(WidgetTester tester) {
     tester.platformDispatcher.accessibilityFeaturesTestValue =
         const FakeAccessibilityFeatures(disableAnimations: true);
     addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
     tester.view.physicalSize = const Size(400, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
-    accel = StreamController();
-    mag = StreamController();
-    gyro = StreamController();
-    gps = StreamController();
+  }
+
+  Future<void> pump(WidgetTester tester, {required double spawnLat}) async {
+    setUpView(tester);
     await tester.pumpWidget(ProviderScope(
-      overrides: [
-        arSensorStreamsProvider.overrideWithValue(
-            ArSensorStreams(accel: accel.stream, mag: mag.stream, gyro: gyro.stream)),
-        arPositionStreamProvider.overrideWithValue(() => gps.stream),
-      ],
+      overrides: streamOverrides(),
       child: MaterialApp(
         home: ArCatchScreen(
           spawnId: 's1',
           speciesEmoji: '🐉',
           spawnLat: spawnLat,
-          spawnLng: 21.0,
+          spawnLng: _lng0,
           cameraEnabled: false,
         ),
       ),
     ));
   }
 
-  Future<void> face(WidgetTester tester, Vec3 m) async {
-    for (var i = 0; i < 80; i++) {
-      accel.add(const Vec3(0, 9.81, 0));
-      mag.add(m);
+  /// Camera pointing at [deg] (reliable compass), held upright-ish.
+  Future<void> face(WidgetTester tester, double deg, {bool reliable = true}) async {
+    for (var i = 0; i < 40; i++) {
+      heading.add(ArHeading(degrees: deg, accuracyDeg: 5, reliable: reliable));
+      pitch.add(-5 * 3.141592653589793 / 180);
     }
     await tester.pump();
     await tester.pump();
@@ -80,58 +95,83 @@ void main() {
           .onTap !=
       null;
 
-  testWidgets('creature anchored north: visible facing north, arrow facing east',
+  Future<void> finish(WidgetTester tester) async {
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 3));
+  }
+
+  testWidgets('creature 12 m north: visible & centred facing north, arrow facing east',
       (tester) async {
-    await pump(tester, spawnLat: 52.00027); // ~30 m north
-    gps.add(_pos(52.0, 21.0));
-    await face(tester, const Vec3(0, -40, -20)); // camera → north
+    await pump(tester, spawnLat: _north(12));
+    gps.add(_pos(_lat0, _lng0));
+    await face(tester, 0);
 
     expect(find.byKey(const ValueKey('ar-sprite')), findsOneWidget);
     expect(find.text('Stworek przed Tobą — zrób zdjęcie'), findsOneWidget);
     expect(shutterEnabled(tester), isTrue);
-    final spriteCenter = tester.getCenter(find.byKey(const ValueKey('ar-sprite')));
-    expect(spriteCenter.dx, closeTo(200, 2));
+    final c = tester.getCenter(find.byKey(const ValueKey('ar-sprite')));
+    expect(c.dx, closeTo(200, 2));
+    expect(c.dy, closeTo(400, 4));
 
-    await face(tester, const Vec3(-20, -40, 0)); // camera → east
+    await face(tester, 90);
     expect(find.byKey(const ValueKey('ar-sprite')), findsNothing);
     expect(find.byKey(const ValueKey('ar-arrow-left')), findsOneWidget);
-    expect(find.text('Obróć się w lewo — stworek 30 m stąd'), findsOneWidget);
+    expect(find.text('Obróć się w lewo — stworek 12 m stąd'), findsOneWidget);
     expect(shutterEnabled(tester), isFalse);
 
     await tester.tap(find.byTooltip('Dane diagnostyczne'));
     await tester.pump();
     expect(find.byKey(const ValueKey('ar-debug')), findsOneWidget);
-    expect(find.textContaining('dystans: 30.'), findsOneWidget);
+    expect(find.textContaining('dystans: 12.'), findsOneWidget);
+    expect(find.textContaining('GPS surowy: ±4.0 m'), findsOneWidget);
+    expect(find.textContaining('GPS wygładzony: ±4.0 m'), findsOneWidget);
+    expect(find.textContaining('namiar wiarygodny: tak'), findsOneWidget);
 
-    await face(tester, const Vec3(0, 0, 3)); // bogus field
+    await face(tester, 90, reliable: false);
     expect(find.text('Skalibruj kompas: porusz telefonem ósemką'), findsOneWidget);
-    await tester.pumpWidget(const SizedBox());
-    await tester.pump(const Duration(seconds: 3));
+    await finish(tester);
   });
 
-  testWidgets('too far: visible but shutter disabled', (tester) async {
-    await pump(tester, spawnLat: 52.001); // ~111 m north
-    gps.add(_pos(52.0, 21.0));
-    await face(tester, const Vec3(0, -40, -20));
-    expect(find.byKey(const ValueKey('ar-sprite')), findsOneWidget);
-    expect(find.textContaining('Podejdź bliżej'), findsOneWidget);
+  testWidgets('30 m away: sprite hidden, radar + "Podejdź bliżej" hint', (tester) async {
+    await pump(tester, spawnLat: _north(30));
+    gps.add(_pos(_lat0, _lng0));
+    await face(tester, 0);
+    expect(find.byKey(const ValueKey('ar-sprite')), findsNothing);
+    expect(find.byKey(const ValueKey('ar-radar')), findsOneWidget);
+    expect(find.text('Podejdź bliżej — stworek 30 m stąd, kierunek ↑'), findsOneWidget);
     expect(shutterEnabled(tester), isFalse);
-    await tester.pumpWidget(const SizedBox());
-    await tester.pump(const Duration(seconds: 3));
+    await finish(tester);
+  });
+
+  testWidgets('very close with poor GPS: near-field mode, centred-ish, catchable',
+      (tester) async {
+    await pump(tester, spawnLat: _north(3));
+    gps.add(_pos(_lat0, _lng0, accuracy: 10));
+    await face(tester, 60); // bearing says it is 60° to the left
+    expect(find.text('Jesteś bardzo blisko — rozejrzyj się'), findsOneWidget);
+    final c = tester.getCenter(find.byKey(const ValueKey('ar-sprite')));
+    // 60° × (3 m / 10 m) = 18° → well inside the view, not at the edge.
+    expect(c.dx, closeTo(200 - 18 / 30 * 200, 3));
+    expect(shutterEnabled(tester), isTrue);
+    await finish(tester);
+  });
+
+  testWidgets('GPS outlier is ignored (sprite does not jump)', (tester) async {
+    await pump(tester, spawnLat: _north(12));
+    gps.add(_pos(_lat0, _lng0));
+    await face(tester, 0);
+    gps.add(_pos(geoOffset(_lat0, _lng0, 90, 40).lat,
+        geoOffset(_lat0, _lng0, 90, 40).lng)); // 40 m east, same second
+    await tester.pump();
+    await face(tester, 0);
+    final c = tester.getCenter(find.byKey(const ValueKey('ar-sprite')));
+    expect(c.dx, closeTo(200, 2));
+    await finish(tester);
   });
 
   testWidgets('after the shutter: back on /map with the saved snackbar', (tester) async {
     SharedPreferences.setMockInitialValues({});
-    tester.platformDispatcher.accessibilityFeaturesTestValue =
-        const FakeAccessibilityFeatures(disableAnimations: true);
-    addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
-    tester.view.physicalSize = const Size(400, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    accel = StreamController();
-    mag = StreamController();
-    gyro = StreamController();
-    gps = StreamController();
+    setUpView(tester);
     final router = GoRouter(initialLocation: '/map', routes: [
       GoRoute(
           path: '/map',
@@ -140,8 +180,8 @@ void main() {
         path: '/catch/camera',
         builder: (_, _) => ArCatchScreen(
           spawnId: 's1',
-          spawnLat: 52.00027,
-          spawnLng: 21.0,
+          spawnLat: _north(12),
+          spawnLng: _lng0,
           cameraEnabled: false,
           takePictureOverride: () async => Uint8List.fromList([1, 2, 3]),
         ),
@@ -154,9 +194,7 @@ void main() {
             headers: {'content-type': 'application/json'}));
     await tester.pumpWidget(ProviderScope(
       overrides: [
-        arSensorStreamsProvider.overrideWithValue(
-            ArSensorStreams(accel: accel.stream, mag: mag.stream, gyro: gyro.stream)),
-        arPositionStreamProvider.overrideWithValue(() => gps.stream),
+        ...streamOverrides(),
         catchRepositoryProvider.overrideWithValue(
             CatchRepository(ApiClient(baseUrl: 'http://test', client: never),
                 sleep: (_) => Completer<void>().future)),
@@ -166,8 +204,8 @@ void main() {
     ));
     router.push('/catch/camera');
     await tester.pumpAndSettle();
-    gps.add(_pos(52.0, 21.0));
-    await face(tester, const Vec3(0, -40, -20));
+    gps.add(_pos(_lat0, _lng0));
+    await face(tester, 0);
     expect(shutterEnabled(tester), isTrue);
 
     await tester.tap(find.byIcon(Icons.camera_alt));
@@ -189,8 +227,8 @@ void main() {
     await tester.pumpWidget(ProviderScope(
       overrides: [
         arCameraEnabledProvider.overrideWithValue(false),
-        arSensorStreamsProvider.overrideWithValue(const ArSensorStreams(
-            accel: Stream.empty(), mag: Stream.empty(), gyro: Stream.empty())),
+        arHeadingProvider.overrideWithValue(const Stream.empty()),
+        arPitchProvider.overrideWithValue(const Stream.empty()),
         arPositionStreamProvider.overrideWithValue(() => const Stream.empty()),
       ],
       child: MaterialApp.router(routerConfig: router),
