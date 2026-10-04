@@ -31,6 +31,7 @@ public class DemoSeeder {
     }
 
     @EventListener(ApplicationReadyEvent.class)
+    @org.springframework.core.annotation.Order(0) // before ImportJob.onStartup
     @Transactional
     public void seed() throws Exception {
         if (!enabled || places.count() > 0) return;

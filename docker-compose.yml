@@ -33,6 +33,7 @@ services:
       ORS_API_KEY: ${ORS_API_KEY:-}
       JWT_SECRET: ${JWT_SECRET:-}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      OVERPASS_URLS: ${OVERPASS_URLS:-}
       PHOTOS_DIR: /photos
     ports: ["8080:8080"]
     volumes: [photos:/photos]

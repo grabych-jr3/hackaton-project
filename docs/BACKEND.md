@@ -604,7 +604,17 @@ out center tags;
 | `incline=6%` | `incline = 6` |
 
 `fetched_at` = поле `timestamp` элемента OSM, если есть, иначе время импорта.
-Ошибка или таймаут → 3 повтора с паузами 5 / 15 / 45 с, затем `source_status.stale = true`. Старые данные остаются.
+**Зеркала Overpass.** `OVERPASS_URLS` — список через запятую (опционально; по умолчанию
+`overpass-api.de`, `lz4.overpass-api.de`, `overpass.private.coffee`, `overpass.kumi.systems`, все `/api/interpreter`).
+Connect timeout 10 с, read timeout 90 с. Ошибка зеркала → сразу пробуем следующее; в лог пишется,
+какое зеркало ответило, а URL сохраняется в `source_status.last_origin` (миграция `V5`).
+Если упали все зеркала — это одна неудачная попытка: 3 повтора с паузами 5 / 15 / 45 с, затем `source_status.stale = true`. Старые данные остаются.
+
+**Офлайн-снимок.** `src/main/resources/seed/osm_krakow_center.json` — компактный ответ Overpass для центра
+Кракова (bbox 19.90,50.04–19.98,50.075; только элементы с `name` и нужными тегами). При старте, если в `place`
+нет OSM-мест (только демо), запускается импорт; если живой импорт не удался и OSM-мест всё ещё нет —
+места грузятся из снимка (source `osm`, `fetched_at` = `osm3s.timestamp_osm_base` снимка,
+`last_origin = snapshot:...`, `stale` остаётся `true`). Отключить стартовый импорт: `OVERPASS_STARTUP_IMPORT=false`.
 Новый источник = новый класс, реализующий интерфейс:
 ```java
 public interface SourceAdapter {

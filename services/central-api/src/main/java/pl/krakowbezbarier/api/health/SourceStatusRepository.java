@@ -30,11 +30,24 @@ public class SourceStatusRepository {
         return m;
     }
 
-    public void success(String source) {
+    public void success(String source) { success(source, null); }
+
+    /** @param origin endpoint that served the data (Overpass mirror URL, "snapshot:..."), stored in last_origin. */
+    public void success(String source, String origin) {
         jdbc.update("""
-                INSERT INTO source_status (source, last_success_at, stale) VALUES (?, now(), false)
-                ON CONFLICT (source) DO UPDATE SET last_success_at = now(), stale = false
-                """, source);
+                INSERT INTO source_status (source, last_success_at, stale, last_origin) VALUES (?, now(), false, ?)
+                ON CONFLICT (source) DO UPDATE SET last_success_at = now(), stale = false, last_origin = EXCLUDED.last_origin
+                """, source, origin);
+    }
+
+    /** Snapshot import: data is old, so keep stale=true but record what was loaded. */
+    public void snapshotLoaded(String source, String origin, String error) {
+        String msg = error == null ? null : error.substring(0, Math.min(500, error.length()));
+        jdbc.update("""
+                INSERT INTO source_status (source, last_error_at, last_error, stale, last_origin) VALUES (?, now(), ?, true, ?)
+                ON CONFLICT (source) DO UPDATE SET last_error_at = now(), last_error = EXCLUDED.last_error,
+                  stale = true, last_origin = EXCLUDED.last_origin
+                """, source, msg, origin);
     }
 
     public void error(String source, String message, boolean stale) {
