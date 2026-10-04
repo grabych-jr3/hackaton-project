@@ -7,6 +7,7 @@ import '../../core/config.dart';
 import '../../data/api/api_client.dart';
 import '../map/place_filters.dart';
 import 'spawn.dart';
+import 'spawn_offset.dart';
 import 'spawn_repository.dart';
 
 final spawnRepositoryProvider = Provider<SpawnRepository>((ref) => useApi
@@ -48,11 +49,13 @@ class SpawnsNotifier extends AsyncNotifier<List<Spawn>> {
     }
   }
 
-  /// Places a test creature next to [here] and adds it to the list.
-  Future<Spawn> spawnHere(LatLng here, {String? speciesId}) async {
+  /// Places a test creature [spawnAheadM] in front of [here] (towards
+  /// [headingDeg], north if unknown) and adds it to the list.
+  Future<Spawn> spawnHere(LatLng here, {String? speciesId, double? headingDeg}) async {
+    final at = spawnAheadOf(here, headingDeg);
     final spawn = await ref
         .read(spawnRepositoryProvider)
-        .spawnHere(here.latitude, here.longitude, speciesId: speciesId);
+        .spawnHere(at.latitude, at.longitude, speciesId: speciesId);
     final current = state.value ?? const <Spawn>[];
     state = AsyncData([
       for (final s in current)

@@ -84,15 +84,12 @@ class DemoSpawnRepository implements SpawnRepository {
   Future<Spawn> spawnHere(double lat, double lng, {String? speciesId}) async {
     final pick = _pool.firstWhere((p) => p.$1 == speciesId,
         orElse: () => _pool[_random.nextInt(_pool.length)]);
-    // ~10–20 m away, so it is "next to you" and immediately catchable.
-    final angle = _random.nextDouble() * 2 * pi;
-    final d = 10 + _random.nextDouble() * 10;
-    final dLat = d * cos(angle) / 111320;
-    final dLng = d * sin(angle) / (111320 * cos(lat * pi / 180));
+    // Placed exactly at lat/lng — the caller already offset it in front of
+    // the user (see spawnAheadOf), same as POST /spawns/here.
     final spawn = Spawn(
       id: 'local-${++_seq}',
-      lat: lat + dLat,
-      lng: lng + dLng,
+      lat: lat,
+      lng: lng,
       speciesId: pick.$1,
       name: pick.$2,
       emoji: pick.$3,

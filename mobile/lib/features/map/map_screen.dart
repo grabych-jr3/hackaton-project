@@ -23,6 +23,7 @@ import '../route/route_panel.dart';
 import '../route/route_service.dart';
 import '../route/route_start.dart';
 import '../spawns/spawn.dart';
+import '../spawns/spawn_offset.dart';
 import '../spawns/spawn_providers.dart';
 import '../spawns/spawn_widgets.dart';
 import 'place_filters.dart';
@@ -194,8 +195,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     if (!mounted || here == null) return;
     setState(() => _spawning = true);
     try {
-      final spawn =
-          await ref.read(spawnsProvider.notifier).spawnHere(here);
+      // In front of the user (heading) so it shows up in the AR camera.
+      final heading = await ref.read(currentHeadingProvider)();
+      if (!mounted) return;
+      final spawn = await ref
+          .read(spawnsProvider.notifier)
+          .spawnHere(here, headingDeg: heading);
       if (!mounted) return;
       _mapController.move(spawn.point, 17);
       _announce('Stworek pojawił się obok Ciebie — otwórz aparat');

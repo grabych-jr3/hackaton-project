@@ -15,7 +15,9 @@ import '../../core/theme/app_colors.dart';
 import '../../data/repositories/catch_repository.dart';
 import '../game/game_models.dart';
 import 'ar_math.dart';
+import 'ar_heading_shim.dart';
 import 'ar_sensors.dart';
+import 'gps_smoother.dart';
 import 'pending_catches.dart';
 
 /// Shown right after the shutter.
@@ -88,11 +90,16 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
   bool _capturing = false;
 
   // --- geo-anchored mode ---
-  final _fusion = HeadingFusion();
   final List<StreamSubscription<dynamic>> _geoSubs = [];
-  double? _accuracy;
-  double? _distance;
-  double? _bearing;
+  final _smoother = GpsSmoother();
+  BearingFreeze? _freeze;
+  double? _heading; // deg
+  double? _headingAccuracy;
+  bool _headingReliable = true;
+  double? _elevation; // deg, EMA-smoothed camera elevation
+  double? _rawAccuracy; // last raw GPS accuracy
+  double? _screenRel; // smoothed on-screen angle (anti-float)
+  DateTime? _screenRelAt;
   bool _showDebug = false;
   String? _liveHint;
   DateTime _liveHintAt = DateTime.fromMillisecondsSinceEpoch(0);
@@ -111,11 +118,15 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
   bool get _cameraOn => widget.cameraEnabled && ref.read(arCameraEnabledProvider);
 
   bool get _geoReady =>
-      _fusion.heading != null && _distance != null && _bearing != null;
-  double? get _rel =>
-      _geoReady ? relativeBearing(_bearing!, _fusion.heading!) : null;
+      _heading != null && _distance != null && _bearing != null;
+  double? get _distance => _freeze?.distanceM;
+  double? get _bearing => _freeze?.bearingDeg;
+  double get _gpsError => _smoother.position?.errorM ?? 0;
+  double? get _rel => _geoReady ? relativeBearing(_bearing!, _heading!) : null;
+  ArMode? get _mode =>
+      _geoReady ? arModeFor(distanceM: _distance!, gpsErrorM: _gpsError) : null;
   bool get _geoCatchOk =>
-      _geoReady && canCatchAt(relDeg: _rel!, distanceM: _distance!);
+      _geoReady && canCatchAt(relDeg: _rel!, distanceM: _distance!, mode: _mode!);
   bool get _canCapture => (widget.geoMode ? _geoCatchOk : _pitchOk) &&
       _lat != null &&
       !_capturing;
@@ -209,12 +220,15 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
   }
 
   void _listenGeo() {
-    final sensors = ref.read(arSensorStreamsProvider);
-    void sub<T>(Stream<T> s, void Function(T) on) {
+    _freeze = BearingFreeze(targetLat: widget.spawnLat!, targetLng: widget.spawnLng!);
+    void sub<T>(Stream<T> Function() make, void Function(T) on) {
       try {
-        _geoSubs.add(s.listen((e) {
+        _geoSubs.add(make().listen((e) {
           if (!mounted) return;
-          setState(() => on(e));
+          setState(() {
+            on(e);
+            _updateScreenRel();
+          });
           _updateLiveHint();
         }, onError: (Object _) {}, cancelOnError: true));
       } catch (_) {
@@ -222,24 +236,33 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
       }
     }
 
-    sub<Vec3>(sensors.accel, (e) {
-      _hasSensor = true;
-      _fusion.onAccel(e);
+    sub<ArHeading>(() => ref.read(arHeadingProvider), (h) {
+      _heading = wrap360(h.degrees);
+      _headingAccuracy = h.accuracyDeg;
+      _headingReliable = h.reliable;
     });
-    sub<Vec3>(sensors.mag, _fusion.onMag);
-    sub<Vec3>(sensors.gyro, _fusion.onGyro);
+    sub<double>(() => ref.read(arPitchProvider), (rad) {
+      _hasSensor = true;
+      final deg = rad * 180 / pi;
+      final prev = _elevation;
+      _elevation = prev == null ? deg : prev + arScreenEmaAlpha * (deg - prev);
+    });
     try {
       _geoSubs.add(ref.read(arPositionStreamProvider)().listen((pos) {
         if (!mounted) return;
         setState(() {
-          _lat = pos.latitude;
-          _lng = pos.longitude;
-          _accuracy = pos.accuracy;
+          _rawAccuracy = pos.accuracy;
           _gpsFailed = false;
-          _distance = Geolocator.distanceBetween(
-              pos.latitude, pos.longitude, widget.spawnLat!, widget.spawnLng!);
-          _bearing = wrap360(Geolocator.bearingBetween(
-              pos.latitude, pos.longitude, widget.spawnLat!, widget.spawnLng!));
+          _smoother.add(GpsFix(
+              lat: pos.latitude,
+              lng: pos.longitude,
+              accuracyM: pos.accuracy,
+              time: pos.timestamp));
+          final p = _smoother.position!;
+          _lat = p.lat;
+          _lng = p.lng;
+          _freeze!.update(p);
+          _updateScreenRel();
         });
         _updateLiveHint();
       }, onError: (Object _) {
@@ -250,9 +273,29 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     }
   }
 
+  /// Anti-float: EMA in angle space; near-field additionally rate-limited.
+  void _updateScreenRel() {
+    final rel = _rel;
+    if (rel == null) return;
+    final now = DateTime.now();
+    final prev = _screenRel;
+    if (_mode == ArMode.nearField) {
+      final target = nearFieldTargetRel(rel, _distance!, _gpsError);
+      final dt = _screenRelAt == null
+          ? 0.0
+          : (now.difference(_screenRelAt!).inMicroseconds / 1e6).clamp(0.0, 0.5);
+      _screenRel = prev == null
+          ? target
+          : rateLimitAngle(prev, emaRelAngle(prev, target), dt);
+    } else {
+      _screenRel = emaRelAngle(prev, rel);
+    }
+    _screenRelAt = now;
+  }
+
   String? get _geoHint {
     if (!_geoReady) return null;
-    return arHint(relDeg: _rel!, distanceM: _distance!, fovDeg: _fovDeg);
+    return arHint(relDeg: _rel!, distanceM: _distance!, mode: _mode!, fovDeg: _fovDeg);
   }
 
   /// Screen-reader live region text, throttled to one change per 2 s.
@@ -376,12 +419,30 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
 
   List<Widget> _geoLayer(Size size, bool reduceMotion) {
     final rel = _rel;
+    final shown = _screenRel ?? rel;
+    final mode = _mode;
     final out = <Widget>[];
-    if (rel != null) {
-      if (inFov(rel, fovDeg: _fovDeg)) {
+    if (rel != null && shown != null && mode == ArMode.far) {
+      // Radar: arrow pointing to the creature, sprite hidden.
+      out.add(Positioned(
+        left: 0,
+        right: 0,
+        top: size.height * 0.4,
+        child: ExcludeSemantics(
+          child: Center(
+            child: Transform.rotate(
+              angle: rel * pi / 180,
+              child: const Icon(Icons.navigation,
+                  key: ValueKey('ar-radar'), color: Colors.white, size: 64),
+            ),
+          ),
+        ),
+      ));
+    } else if (rel != null && shown != null) {
+      if (inFov(shown, fovDeg: _fovDeg)) {
         final px = spriteSizeForDistance(_distance!);
-        final x = screenX(rel, size.width, fovDeg: _fovDeg);
-        final y = screenY(_fusion.elevation ?? targetElevationDeg, size.width,
+        final x = screenX(shown, size.width, fovDeg: _fovDeg);
+        final y = screenY(_elevation ?? targetElevationDeg, size.width,
             size.height, fovDeg: _fovDeg);
         Widget sprite = Text(_spriteEmoji,
             key: const ValueKey('ar-sprite'),
@@ -402,7 +463,7 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
           child: ExcludeSemantics(child: Center(child: sprite)),
         ));
       } else {
-        final left = rel < 0;
+        final left = shown < 0;
         out.add(Positioned(
           left: left ? 8 : null,
           right: left ? null : 8,
@@ -426,13 +487,17 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
           padding: const EdgeInsets.all(8),
           color: Colors.black87,
           child: Text(
-            'kurs: ${f(_fusion.heading)}°\n'
-            'namiar: ${f(_bearing)}°\n'
-            'różnica: ${f(rel)}°\n'
-            'nachylenie: ${f(_fusion.elevation)}°\n'
+            'kurs: ${f(_heading)}° (±${f(_headingAccuracy)}°)\n'
+            'namiar: ${f(_bearing)}°${(_freeze?.frozen ?? false) ? ' (zamrożony)' : ''}\n'
+            'różnica: ${f(rel)}° / ekran ${f(shown)}°\n'
+            'nachylenie: ${f(_elevation)}°\n'
             'dystans: ${f(_distance, 1)} m\n'
-            'dokładność GPS: ${f(_accuracy, 1)} m\n'
-            'kompas: ${_fusion.magValid ? 'OK' : 'kalibracja'}',
+            'GPS surowy: ±${f(_rawAccuracy, 1)} m\n'
+            'GPS wygładzony: ±${f(_smoother.position?.errorM, 1)} m\n'
+            'odrzucone odczyty: ${_smoother.rejectedCount}\n'
+            'tryb: ${mode?.name ?? '-'}\n'
+            'namiar wiarygodny: ${mode == null ? '-' : mode == ArMode.nearField ? 'nie' : 'tak'}\n'
+            'kompas: ${_headingReliable ? 'OK' : 'kalibracja'}',
             style: const TextStyle(color: Colors.white, fontSize: 12),
           ),
         ),
@@ -573,7 +638,7 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
                     else if (_gpsFailed)
                       const _Hint('Brak lokalizacji — zdjęcie wymaga GPS.')
                     else if (widget.geoMode) ...[
-                      if (!_fusion.magValid)
+                      if (!_headingReliable)
                         const Padding(
                           padding: EdgeInsets.only(bottom: 6),
                           child: _Hint('Skalibruj kompas: porusz telefonem ósemką'),
@@ -593,7 +658,7 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
                       enabled: _canCapture,
                       label: 'Zrób zdjęcie i złap stworka',
                       hint: widget.geoMode && !_canCapture
-                          ? 'Niedostępne: wyceluj w stworka z odległości do 80 m'
+                          ? 'Niedostępne: wyceluj w stworka z odległości do 20 m'
                           : null,
                       excludeSemantics: true,
                       onTap: _canCapture ? _capture : null,

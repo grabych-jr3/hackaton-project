@@ -8,8 +8,17 @@ const defaultHorizontalFovDeg = 60.0;
 /// Target elevation of the creature (slightly below horizon = on the ground).
 const targetElevationDeg = -5.0;
 
+/// Creature is drawn only within this distance (m); beyond → arrow hint.
+const arVisibleRadiusM = 20.0;
+
 /// Max distance (m) at which a photo may be taken.
-const maxCatchDistanceM = 80.0;
+const arCatchRadiusM = 20.0;
+
+/// Near-field (bearing unreliable) max on-screen drift rate (deg/s).
+const arNearFieldMaxRateDegPerSec = 30.0;
+
+/// EMA weight of a new sample for the on-screen angle / elevation.
+const arScreenEmaAlpha = 0.2;
 
 /// Creature must be within ±this many degrees of the screen centre to shoot.
 const catchCenterToleranceDeg = 15.0;
@@ -124,17 +133,70 @@ double screenY(double elevationDeg, double width, double height,
   return height / 2 - rel / (vFov / 2) * (height / 2);
 }
 
-/// Sprite size: 140 px at ≤10 m down to 48 px at ≥80 m (linear).
+/// Sprite size: 160 px at ≤3 m down to 64 px at ≥[arVisibleRadiusM] (linear).
 double spriteSizeForDistance(double meters) {
-  const near = 10.0, far = 80.0, big = 140.0, small = 48.0;
+  const near = 3.0, far = arVisibleRadiusM, big = 160.0, small = 64.0;
   if (meters <= near) return big;
   if (meters >= far) return small;
   return big - (meters - near) / (far - near) * (big - small);
 }
 
-/// Shutter allowed: creature near the centre and close enough.
-bool canCatchAt({required double relDeg, required double distanceM}) =>
-    relDeg.abs() <= catchCenterToleranceDeg && distanceM <= maxCatchDistanceM;
+/// How the creature is presented for the current distance / GPS error.
+enum ArMode {
+  /// Beyond [arVisibleRadiusM]: sprite hidden, radar/arrow hint.
+  far,
+
+  /// GPS error larger than the distance: bearing unreliable, sprite shown
+  /// near the centre with damped drift.
+  nearField,
+
+  /// Normal geo-anchored placement.
+  normal,
+}
+
+ArMode arModeFor({required double distanceM, required double gpsErrorM}) {
+  if (distanceM > arVisibleRadiusM) return ArMode.far;
+  if (gpsErrorM > distanceM) return ArMode.nearField;
+  return ArMode.normal;
+}
+
+/// Shutter allowed: within [arCatchRadiusM] and centred (±15°); in near-field
+/// mode the bearing is meaningless, so only the distance counts.
+bool canCatchAt({
+  required double relDeg,
+  required double distanceM,
+  ArMode mode = ArMode.normal,
+}) {
+  if (distanceM > arCatchRadiusM || mode == ArMode.far) return false;
+  return mode == ArMode.nearField || relDeg.abs() <= catchCenterToleranceDeg;
+}
+
+/// Target on-screen angle in near-field mode: the raw relative bearing
+/// scaled by how trustworthy it is (distance / error < 1) → centred-ish.
+double nearFieldTargetRel(double relDeg, double distanceM, double gpsErrorM) {
+  if (gpsErrorM <= 0) return relDeg;
+  return relDeg * (distanceM / gpsErrorM).clamp(0.0, 1.0);
+}
+
+/// Moves [previous] towards [target] (degrees, wrap-safe) by at most
+/// [maxRateDegPerSec]·[dtSec].
+double rateLimitAngle(double previous, double target, double dtSec,
+    {double maxRateDegPerSec = arNearFieldMaxRateDegPerSec}) {
+  final step = maxRateDegPerSec * max(0.0, dtSec);
+  return wrap180(previous + wrap180(target - previous).clamp(-step, step));
+}
+
+/// EMA in angle space for a relative angle (−180..180). [alpha] = new weight.
+double emaRelAngle(double? previous, double next, {double alpha = arScreenEmaAlpha}) {
+  if (previous == null) return wrap180(next);
+  return wrap180(previous + alpha * wrap180(next - previous));
+}
+
+/// Arrow pointing to the creature relative to where the camera looks.
+String directionArrow(double relDeg) {
+  const arrows = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'];
+  return arrows[(wrap360(relDeg + 22.5) ~/ 45) % 8];
+}
 
 /// Plausible Earth field strength (µT); outside → compass needs calibration.
 bool magneticFieldLooksValid(Vec3 mag) {
@@ -143,14 +205,20 @@ bool magneticFieldLooksValid(Vec3 mag) {
 }
 
 /// Hint for the current state (Polish UI).
-String arHint({required double relDeg, required double distanceM, double fovDeg = defaultHorizontalFovDeg}) {
+String arHint({
+  required double relDeg,
+  required double distanceM,
+  ArMode mode = ArMode.normal,
+  double fovDeg = defaultHorizontalFovDeg,
+}) {
   final m = distanceM.round();
+  if (mode == ArMode.far || distanceM > arVisibleRadiusM) {
+    return 'Podejdź bliżej — stworek $m m stąd, kierunek ${directionArrow(relDeg)}';
+  }
+  if (mode == ArMode.nearField) return 'Jesteś bardzo blisko — rozejrzyj się';
   if (!inFov(relDeg, fovDeg: fovDeg)) {
     final side = relDeg < 0 ? 'w lewo' : 'w prawo';
     return 'Obróć się $side — stworek $m m stąd';
-  }
-  if (distanceM > maxCatchDistanceM) {
-    return 'Podejdź bliżej (${(distanceM - maxCatchDistanceM).round()} m za dużo)';
   }
   if (relDeg.abs() > catchCenterToleranceDeg) {
     return 'Wyceluj stworka na środek ekranu';

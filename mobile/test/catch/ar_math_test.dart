@@ -89,27 +89,64 @@ void main() {
     });
 
     test('size by distance', () {
-      expect(spriteSizeForDistance(5), 140);
-      expect(spriteSizeForDistance(10), 140);
-      expect(spriteSizeForDistance(45), closeTo(94, 1e-9));
-      expect(spriteSizeForDistance(80), 48);
-      expect(spriteSizeForDistance(500), 48);
+      expect(spriteSizeForDistance(1), 160);
+      expect(spriteSizeForDistance(3), 160);
+      expect(spriteSizeForDistance(11.5), closeTo(112, 1e-9));
+      expect(spriteSizeForDistance(20), 64);
+      expect(spriteSizeForDistance(500), 64);
     });
   });
 
   group('gating and hints', () {
-    test('shutter gating', () {
-      expect(canCatchAt(relDeg: 0, distanceM: 30), isTrue);
-      expect(canCatchAt(relDeg: -15, distanceM: 80), isTrue);
-      expect(canCatchAt(relDeg: 16, distanceM: 30), isFalse);
-      expect(canCatchAt(relDeg: 0, distanceM: 81), isFalse);
+    test('visibility / gating at 5, 15, 25 m (GPS error 4 m)', () {
+      expect(arVisibleRadiusM, 20);
+      expect(arCatchRadiusM, 20);
+      for (final d in [5.0, 15.0]) {
+        final mode = arModeFor(distanceM: d, gpsErrorM: 4);
+        expect(mode, ArMode.normal, reason: '$d m');
+        expect(canCatchAt(relDeg: 0, distanceM: d, mode: mode), isTrue);
+        expect(canCatchAt(relDeg: 16, distanceM: d, mode: mode), isFalse);
+      }
+      final far = arModeFor(distanceM: 25, gpsErrorM: 4);
+      expect(far, ArMode.far);
+      expect(canCatchAt(relDeg: 0, distanceM: 25, mode: far), isFalse);
+      expect(canCatchAt(relDeg: 0, distanceM: 21), isFalse);
+    });
+
+    test('near-field: GPS error > distance → bearing unreliable', () {
+      final mode = arModeFor(distanceM: 3, gpsErrorM: 8);
+      expect(mode, ArMode.nearField);
+      // Bearing ignored for the shutter.
+      expect(canCatchAt(relDeg: 120, distanceM: 3, mode: mode), isTrue);
+      expect(arHint(relDeg: 120, distanceM: 3, mode: mode),
+          'Jesteś bardzo blisko — rozejrzyj się');
+      // Centred-ish: offset scaled by distance/error.
+      expect(nearFieldTargetRel(40, 3, 8), closeTo(15, 1e-9));
+      expect(nearFieldTargetRel(40, 10, 8), 40);
+      // Drift damped to ≤ 30°/s.
+      expect(rateLimitAngle(0, 90, 0.5), closeTo(15, 1e-9));
+      expect(rateLimitAngle(0, -90, 0.1), closeTo(-3, 1e-9));
+      expect(rateLimitAngle(0, 2, 0.5), closeTo(2, 1e-9));
+      expect(rateLimitAngle(175, -175, 1), closeTo(-175, 1e-9)); // wrap
+    });
+
+    test('screen EMA in angle space (wrap-safe)', () {
+      expect(emaRelAngle(null, 10), 10);
+      expect(emaRelAngle(0, 10), closeTo(2, 1e-9));
+      expect(emaRelAngle(170, -170), closeTo(174, 1e-9));
     });
 
     test('hints', () {
-      expect(arHint(relDeg: -90, distanceM: 35), 'Obróć się w lewo — stworek 35 m stąd');
-      expect(arHint(relDeg: 90, distanceM: 35), 'Obróć się w prawo — stworek 35 m stąd');
-      expect(arHint(relDeg: 0, distanceM: 30), 'Stworek przed Tobą — zrób zdjęcie');
-      expect(arHint(relDeg: 0, distanceM: 115), 'Podejdź bliżej (35 m za dużo)');
+      expect(arHint(relDeg: -90, distanceM: 15), 'Obróć się w lewo — stworek 15 m stąd');
+      expect(arHint(relDeg: 90, distanceM: 15), 'Obróć się w prawo — stworek 15 m stąd');
+      expect(arHint(relDeg: 0, distanceM: 12), 'Stworek przed Tobą — zrób zdjęcie');
+      expect(arHint(relDeg: 20, distanceM: 12), 'Wyceluj stworka na środek ekranu');
+      expect(arHint(relDeg: 90, distanceM: 35, mode: ArMode.far),
+          'Podejdź bliżej — stworek 35 m stąd, kierunek →');
+      expect(arHint(relDeg: 0, distanceM: 30), 'Podejdź bliżej — stworek 30 m stąd, kierunek ↑');
+      expect(directionArrow(-90), '←');
+      expect(directionArrow(180), '↓');
+      expect(directionArrow(40), '↗');
     });
 
     test('magnetometer validity', () {

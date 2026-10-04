@@ -13,6 +13,7 @@ import 'package:hackaton_project/data/repositories/places_repository.dart';
 import 'package:hackaton_project/features/game/game_models.dart';
 import 'package:hackaton_project/features/route/route_start.dart';
 import 'package:hackaton_project/features/spawns/spawn.dart';
+import 'package:hackaton_project/features/spawns/spawn_offset.dart';
 import 'package:hackaton_project/features/spawns/spawn_providers.dart';
 import 'package:hackaton_project/features/spawns/spawn_repository.dart';
 import 'package:http/http.dart' as http;
@@ -63,6 +64,7 @@ Future<void> _pumpApp(WidgetTester tester, SpawnRepository spawns) async {
   await tester.pumpWidget(ProviderScope(
     overrides: [
       placesRepositoryProvider.overrideWithValue(_FileRepo()),
+      currentHeadingProvider.overrideWithValue(() async => null),
       spawnRepositoryProvider.overrideWithValue(spawns),
     ],
     child: const KrakowBezBarierApp(),
@@ -111,15 +113,32 @@ void main() {
         contains('DANE PRZYKŁADOWE'));
   });
 
-  test('demo: spawn here is kept in memory, ~10–20 m away', () async {
+  test('spawn-here offset: 8 m ahead along the heading, north by default', () {
+    const here = LatLng(50.06, 19.94);
+    const d = Distance();
+    for (final h in [0.0, 90.0, 225.0]) {
+      final p = spawnAheadOf(here, h);
+      expect(d(here, p), closeTo(8, 0.1));
+      expect(d.bearing(here, p) % 360, closeTo(h, 0.5));
+      expect(d(here, p), inInclusiveRange(6, 10));
+    }
+    final north = spawnAheadOf(here, null);
+    expect(north.longitude, closeTo(here.longitude, 1e-12));
+    expect(north.latitude, greaterThan(here.latitude));
+    expect(d(here, north), closeTo(8, 0.1));
+  });
+
+  test('demo: spawn here is kept in memory at the given (offset) point', () async {
     TestWidgetsFlutterBinding.ensureInitialized();
     final repo = DemoSpawnRepository();
     const here = LatLng(50.06, 19.94);
-    final s = await repo.spawnHere(here.latitude, here.longitude,
-        speciesId: 'smok');
+    final at = spawnAheadOf(here, 90);
+    final s = await repo.spawnHere(at.latitude, at.longitude, speciesId: 'smok');
     expect(s.kind, 'user');
     expect(s.name, 'Smok');
-    expect(const Distance()(here, s.point), lessThanOrEqualTo(25));
+    expect(s.lat, at.latitude);
+    expect(s.lng, at.longitude);
+    expect(const Distance()(here, s.point), closeTo(8, 0.1));
     final all = await repo.getSpawns(SpawnBbox.krakow);
     expect(all.map((x) => x.id), contains(s.id));
   });
@@ -182,9 +201,14 @@ void main() {
 
     await tester.tap(btn);
     await tester.pumpAndSettle();
-    expect(posts, [
-      {'lat': 50.0617, 'lng': 19.9373}
-    ]);
+    // No compass → 8 m north of the user, so it is visible in the camera.
+    expect(posts, hasLength(1));
+    expect(posts.single['lat'], closeTo(50.0617 + 8 / 111320, 1e-9));
+    expect(posts.single['lng'], closeTo(19.9373, 1e-9));
+    expect(
+        const Distance()(const LatLng(50.0617, 19.9373),
+            LatLng(posts.single['lat'] as double, posts.single['lng'] as double)),
+        closeTo(8, 0.1));
     expect(find.text('Stworek pojawił się obok Ciebie — otwórz aparat'),
         findsOneWidget);
     final spawns = container.read(spawnsProvider).value!;
