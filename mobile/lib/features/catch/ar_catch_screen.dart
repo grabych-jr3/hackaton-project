@@ -134,6 +134,10 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
   final Map<String, ScreenSmoother> _smoothers = {};
   final Map<String, ({double e, double n, double u})> _goodEnu = {};
   final Map<String, String> _goodEnuKey = {};
+
+  /// Creatures closer than this are shown this far in front (see [_enuFor]).
+  static const double _nearShowM = 3.0;
+  final Map<String, ({double e, double n, double u})> _nearEnu = {};
   List<double>? _m;
   double? _lat, _lng;
   double? _rawAccuracy;
@@ -382,6 +386,19 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     final dist = sqrt(enu.e * enu.e + enu.n * enu.n);
     final err = _gps.position?.errorM ?? 0;
     final good = _goodEnu[t.id];
+    // Creature (almost) under the user's feet — e.g. a test spawn placed exactly
+    // at the GPS position: show it [_nearShowM] in front, in the direction the
+    // user faced when placing it (or the camera direction when first seen), and
+    // keep that world point fixed so turning the phone still moves the sprite.
+    if (dist < _nearShowM) {
+      final near = _nearEnu[t.id] ??= () {
+        final bearing = ref.read(spawnAnchorBearingProvider(t.id)) ??
+            (_m != null ? cameraYawDeg(_m!) + arDeclinationDeg : 0.0);
+        final r = bearing * pi / 180;
+        return (e: _nearShowM * sin(r), n: _nearShowM * cos(r), u: enu.u);
+      }();
+      return near;
+    }
     if (err > dist && good != null) return good;
     return _goodEnu[t.id] = enu;
   }

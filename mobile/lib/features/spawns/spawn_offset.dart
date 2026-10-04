@@ -8,9 +8,9 @@ import 'package:latlong2/latlong.dart';
 import '../catch/ar_sensors.dart';
 import '../catch/gps_smoother.dart';
 
-/// "Postaw stworka tutaj" places the test creature this far in front of the
-/// user (inside the 6–10 m band) so it is immediately visible in the camera.
-const spawnAheadM = 8.0;
+/// "Postaw stworka tutaj" places the test creature exactly at the user's
+/// GPS position (0 m ahead). Seeded creatures are snapped to footways server-side.
+const spawnAheadM = 0.0;
 
 /// Point [meters] ahead of [here] in the [headingDeg] direction; north when
 /// the heading is unknown.

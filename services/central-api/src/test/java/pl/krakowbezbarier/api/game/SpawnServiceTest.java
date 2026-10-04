@@ -110,12 +110,12 @@ class SpawnServiceTest {
     }
 
     @Test
-    void spawnHereReturnsSnappedCoordinates() {
-        when(snapper.snap(50.06, 19.93)).thenReturn(new SpawnSnapper.Result(50.0601, 19.9302, SpawnSnapper.Method.ors, 15));
+    void spawnHereIsPlacedExactlyAtUserPositionWithoutSnapping() {
         var dto = svc.spawnHere(user, new SpawnService.SpawnHereRequest(50.06, 19.93, "sowa"));
-        assertEquals(50.0601, dto.lat());
-        assertEquals(19.9302, dto.lng());
-        verify(jdbc).update(contains("'user'"), any(), eq(19.9302), eq(50.0601), eq("sowa"), eq("rare"), any(), eq(user));
+        assertEquals(50.06, dto.lat());
+        assertEquals(19.93, dto.lng());
+        verify(jdbc).update(contains("'user'"), any(), eq(19.93), eq(50.06), eq("sowa"), eq("rare"), any(), eq(user));
+        verifyNoInteractions(snapper);
     }
 
     @Test

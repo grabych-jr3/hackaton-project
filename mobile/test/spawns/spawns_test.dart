@@ -122,22 +122,23 @@ void main() {
         contains('DANE PRZYKŁADOWE'));
   });
 
-  test('spawn-here offset: 8 m ahead along the heading, north by default', () {
+  test('geo offset helper: N m ahead along the heading; spawn-here default is 0 m', () {
     const here = LatLng(50.06, 19.94);
     const d = Distance();
     for (final h in [0.0, 90.0, 225.0]) {
-      final p = spawnAheadOf(here, h);
+      final p = spawnAheadOf(here, h, meters: 8);
       expect(d(here, p), closeTo(8, 0.1));
       expect(d.bearing(here, p) % 360, closeTo(h, 0.5));
       expect(d(here, p), inInclusiveRange(6, 10));
     }
-    final north = spawnAheadOf(here, null);
+    expect(d(here, spawnAheadOf(here, 90)), closeTo(0, 0.01)); // test spawn = exact GPS point
+    final north = spawnAheadOf(here, null, meters: 8);
     expect(north.longitude, closeTo(here.longitude, 1e-12));
     expect(north.latitude, greaterThan(here.latitude));
     expect(d(here, north), closeTo(8, 0.1));
   });
 
-  test('demo: spawn here is kept in memory at the given (offset) point', () async {
+  test('demo: spawn here is kept in memory at the given point', () async {
     TestWidgetsFlutterBinding.ensureInitialized();
     final repo = DemoSpawnRepository();
     const here = LatLng(50.06, 19.94);
@@ -147,7 +148,7 @@ void main() {
     expect(s.name, 'Smok Wawelski');
     expect(s.lat, at.latitude);
     expect(s.lng, at.longitude);
-    expect(const Distance()(here, s.point), closeTo(8, 0.1));
+    expect(const Distance()(here, s.point), closeTo(0, 0.1));
     final all = await repo.getSpawns(SpawnBbox.krakow);
     expect(all.map((x) => x.id), contains(s.id));
   });
@@ -215,20 +216,20 @@ void main() {
 
     await tester.tap(btn);
     await tester.pumpAndSettle();
-    // No compass → 8 m north of the user, so it is visible in the camera.
+    // Test spawn is placed exactly at the user's GPS position.
     expect(posts, hasLength(1));
-    expect(posts.single['lat'], closeTo(50.0617 + 8 / 111320, 1e-9));
+    expect(posts.single['lat'], closeTo(50.0617, 1e-9));
     expect(posts.single['lng'], closeTo(19.9373, 1e-9));
     expect(
         const Distance()(const LatLng(50.0617, 19.9373),
             LatLng(posts.single['lat'] as double, posts.single['lng'] as double)),
-        closeTo(8, 0.1));
+        closeTo(0, 0.1));
     expect(find.text('Stworek pojawił się obok Ciebie — otwórz aparat'),
         findsOneWidget);
     final spawns = container.read(spawnsProvider).value!;
     expect(spawns.map((s) => s.id), contains('u-1'));
     final camera = MapCamera.of(tester.element(find.byType(MarkerLayer).first));
-    expect(camera.center.latitude, closeTo(50.0617 + 8 / 111320, 1e-6));
+    expect(camera.center.latitude, closeTo(50.0617, 1e-6));
     expect(container.read(userLocationProvider)!.point,
         const LatLng(50.0617, 19.9373));
   });
@@ -254,7 +255,7 @@ void main() {
     });
   }
 
-  test('spawnAtGps places the creature 8 m ahead of the fresh fix', () async {
+  test('spawnAtGps places the creature exactly at the fresh fix', () async {
     const fix = LatLng(50.068, 19.99);
     final c = ProviderContainer(overrides: [
       freshGpsFixProvider
@@ -264,7 +265,7 @@ void main() {
     addTearDown(c.dispose);
     for (final h in [0.0, 90.0, 213.0, 359.0]) {
       final s = await c.read(spawnsProvider.notifier).spawnAtGps(headingDeg: h);
-      expect(const Distance()(fix, s!.point), inInclusiveRange(7.5, 8.5));
+      expect(const Distance()(fix, s!.point), lessThan(0.5));
     }
   });
 

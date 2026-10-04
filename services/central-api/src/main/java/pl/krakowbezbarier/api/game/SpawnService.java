@@ -149,9 +149,8 @@ public class SpawnService {
         for (int i = 0; i <= active.size() - MAX_USER_SPAWNS; i++) {
             jdbc.update("UPDATE creature_spawn SET expires_at = now() WHERE id = ?", active.get(i));
         }
-        SpawnSnapper.Result snapped = snapper.snap(lat, lng); // never inside a building
-        lat = snapped.lat();
-        lng = snapped.lng();
+        // Test spawn: placed exactly at the user's position (no footway snapping —
+        // seeds are snapped, see seedPoint()).
         UUID id = UUID.randomUUID();
         Instant expires = Instant.now().plus(USER_TTL);
         jdbc.update("""
