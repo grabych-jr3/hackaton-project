@@ -214,6 +214,26 @@ Stream<Position> devicePositionStream() async* {
   if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) {
     throw StateError('denied');
   }
+  // A cold high-accuracy GPS fix can take 10–60 s. Start immediately with the
+  // last known position (if recent) and a quick coarse fix (network/Wi-Fi);
+  // the high-accuracy stream below then refines it.
+  if (!kIsWeb) {
+    try {
+      final last = await Geolocator.getLastKnownPosition();
+      if (last != null &&
+          DateTime.now().difference(last.timestamp) < const Duration(minutes: 5)) {
+        yield last;
+      }
+    } catch (_) {}
+  }
+  try {
+    yield await Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.low,
+        timeLimit: Duration(seconds: 4),
+      ),
+    );
+  } catch (_) {}
   yield* Geolocator.getPositionStream(
     locationSettings: const LocationSettings(
       accuracy: LocationAccuracy.high,
