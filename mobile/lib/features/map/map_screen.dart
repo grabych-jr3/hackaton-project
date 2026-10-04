@@ -793,40 +793,6 @@ class _FloatingSearchIslandState extends ConsumerState<_FloatingSearchIsland> {
                       },
                     ),
                   ),
-                  // Crowd status indicator (Live crowd HUD)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: AppColors.mint100,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: AppColors.mint300),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 7,
-                          height: 7,
-                          decoration: const BoxDecoration(
-                            color: AppColors.primary,
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(color: AppColors.primary, blurRadius: 6),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        const Text(
-                          'Ruch: Mały',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
                 ],
               ),
               const SizedBox(height: 8),
