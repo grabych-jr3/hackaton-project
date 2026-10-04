@@ -83,9 +83,11 @@ public class RouteService {
             try {
                 body = ors.directions(FOOT, orsBody(req, false, avoid));
             } catch (OrsException e) {
-                if (avoid.isEmpty() || !retryable(e)) throw e;
+                boolean transport = e.httpStatus() == 0;
+                if (!transport && (avoid.isEmpty() || !retryable(e))) throw e;
                 logOrs(FOOT, e, false);
-                avoid = List.of(); // no route around the crowds - take the normal one
+                // No route around the crowds, or a network hiccup/timeout: retry once with the plain request.
+                avoid = List.of();
                 body = ors.directions(FOOT, orsBody(req, false));
             }
             res = parseOrs(body, n, false, FOOT);
@@ -197,7 +199,14 @@ public class RouteService {
 
     /** Logs code/status only: the ORS message echoes coordinates, the request holds the user's profile. */
     private static void logOrs(String profile, OrsException e, boolean restricted) {
-        log.warn("ORS error profile={} code={} http={} restricted={}", profile, e.code(), e.httpStatus(), restricted);
+        if (e.httpStatus() == 0) {
+            // transport failure: message is only the exception type (no coordinates)
+            log.warn("ORS unreachable profile={} cause={} restricted={}", profile, e.getMessage(), restricted);
+        } else if (e.code() != null && RETRY_CODES.contains(e.code()) && "wheelchair".equals(profile)) {
+            log.info("ORS no wheelchair route profile={} code={} restricted={} (expected; trying alternatives)", profile, e.code(), restricted);
+        } else {
+            log.warn("ORS error profile={} code={} http={} restricted={}", profile, e.code(), e.httpStatus(), restricted);
+        }
     }
 
     static String reason(OrsException e) {

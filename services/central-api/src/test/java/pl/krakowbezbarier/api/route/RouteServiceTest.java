@@ -307,10 +307,10 @@ class RouteServiceTest {
     }
 
     @Test
-    void transportErrorFallsBack() {
-        var fake = new FakeOrs(new OrsException(null, 0, "SocketTimeoutException"));
+    void transportErrorRetriesOnceThenFallsBack() {
+        var fake = new FakeOrs(new OrsException(null, 0, "SocketTimeoutException"), new OrsException(null, 0, "SocketTimeoutException"));
         RouteResponse r = new RouteService(fake, 10).route(req);
-        assertEquals(1, fake.calls.size());
+        assertEquals(2, fake.calls.size()); // one retry after a network failure
         assertTrue(r.fallbackReason().contains("usługa niedostępna"), r.fallbackReason());
     }
 

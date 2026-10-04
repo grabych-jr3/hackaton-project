@@ -24,7 +24,7 @@ public class OrsClient {
                      @Value("${app.ors.base-url:https://api.openrouteservice.org}") String baseUrl) {
         var rf = new SimpleClientHttpRequestFactory();
         rf.setConnectTimeout((int) Duration.ofSeconds(5).toMillis());
-        rf.setReadTimeout((int) Duration.ofSeconds(15).toMillis());
+        rf.setReadTimeout((int) Duration.ofSeconds(30).toMillis()); // public ORS can be slow on long routes
         this.client = RestClient.builder().baseUrl(baseUrl).requestFactory(rf).build();
         this.apiKey = apiKey;
     }
