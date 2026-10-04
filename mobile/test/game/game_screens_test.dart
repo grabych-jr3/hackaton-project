@@ -60,8 +60,7 @@ void main() {
     await pumpScreen(tester, const CatchScreen());
 
     expect(find.text('DANE PRZYKŁADOWE'), findsWidgets);
-    await tester.tap(find.text('Ankieta'));
-    await tester.pumpAndSettle();
+    expect(find.text('Zgłoszenia i ankieta'), findsOneWidget);
     expect(find.text('Saldo: 120 pkt'), findsOneWidget);
     final send = find.ancestor(of: find.text('Wyślij zgłoszenie i złap'), matching: find.bySubtype<FilledButton>());
     await tester.scrollUntilVisible(find.text('Wyślij zgłoszenie i złap'), 200, scrollable: find.byType(Scrollable).first);

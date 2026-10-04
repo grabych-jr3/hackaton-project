@@ -222,15 +222,11 @@ void main() {
     }
   });
 
-  testWidgets('demo mode: catch screen uses the survey, Kamera explains why', (tester) async {
+  testWidgets('demo mode: survey screen explains why there is no camera', (tester) async {
     await pumpScreen(tester, const CatchScreen());
     expect(find.text('Gdzie jest bariera?'), findsOneWidget);
     expect(find.text(demoCameraMessage), findsOneWidget);
-
-    await tester.tap(find.text('Kamera'));
-    await tester.pumpAndSettle();
-    expect(find.text('Gdzie jest bariera?'), findsOneWidget);
-    expect(find.text(demoCameraMessage), findsNWidgets(2)); // notice + snackbar
-    expect(find.bySemanticsLabel('Otwórz kamerę AR i złap stworka'), findsNothing);
+    expect(find.text('Kamera'), findsNothing); // no fake camera tab
+    expect(find.text('Otwórz aparat'), findsNothing);
   });
 }

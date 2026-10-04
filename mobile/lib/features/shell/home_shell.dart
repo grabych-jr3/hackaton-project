@@ -1,17 +1,19 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../catch/open_camera.dart';
 
 /// Modern floating glassmorphic bottom navigation with highlighted center action button.
-class HomeShell extends StatelessWidget {
+class HomeShell extends ConsumerWidget {
   const HomeShell({super.key, required this.navigationShell});
 
   final StatefulNavigationShell navigationShell;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final currentIndex = navigationShell.currentIndex;
 
     return Scaffold(
@@ -58,7 +60,10 @@ class HomeShell extends StatelessWidget {
                     ),
                     _CenterScanButton(
                       isSelected: currentIndex == 2,
-                      onTap: () => _onTabSelected(2),
+                      // Tap: straight into the fullscreen camera (survey in
+                      // demo mode). Long-press: survey & Zgłoszenia tab.
+                      onTap: () => openCatchCamera(context, ref),
+                      onLongPress: () => _onTabSelected(2),
                     ),
                     _NavItem(
                       icon: Icons.grid_view_outlined,
@@ -160,6 +165,8 @@ class _FocusableTab extends StatefulWidget {
     required this.onTap,
     required this.child,
     this.circle = false,
+    this.onLongPress,
+    this.hint,
   });
 
   final String label;
@@ -167,6 +174,8 @@ class _FocusableTab extends StatefulWidget {
   final VoidCallback onTap;
   final Widget child;
   final bool circle;
+  final VoidCallback? onLongPress;
+  final String? hint;
 
   @override
   State<_FocusableTab> createState() => _FocusableTabState();
@@ -183,8 +192,10 @@ class _FocusableTabState extends State<_FocusableTab> {
       button: true,
       selected: widget.isSelected,
       label: widget.label,
+      hint: widget.hint,
       excludeSemantics: true,
       onTap: widget.onTap,
+      onLongPress: widget.onLongPress,
       child: ConstrainedBox(
         constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
         child: Material(
@@ -193,6 +204,7 @@ class _FocusableTabState extends State<_FocusableTab> {
             customBorder: widget.circle ? const CircleBorder() : null,
             borderRadius: radius,
             onTap: widget.onTap,
+            onLongPress: widget.onLongPress,
             onFocusChange: (f) => setState(() => _focused = f),
             child: DecoratedBox(
               position: DecorationPosition.foreground,
@@ -216,17 +228,21 @@ class _CenterScanButton extends StatelessWidget {
   const _CenterScanButton({
     required this.isSelected,
     required this.onTap,
+    required this.onLongPress,
   });
 
   final bool isSelected;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context) {
     return _FocusableTab(
       label: 'Złap',
+      hint: 'Przytrzymaj, aby otworzyć ankietę i zgłoszenia',
       isSelected: isSelected,
       onTap: onTap,
+      onLongPress: onLongPress,
       circle: true,
       child: Container(
         width: 52,
