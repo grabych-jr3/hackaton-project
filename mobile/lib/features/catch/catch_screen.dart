@@ -9,6 +9,7 @@ import '../../data/repositories/places_repository.dart';
 import '../game/game_models.dart';
 import '../game/game_providers.dart';
 import '../place/status_chip.dart';
+import '../spawns/spawn_providers.dart';
 import 'ar_catch_screen.dart';
 import 'pending_catches.dart';
 
@@ -108,7 +109,19 @@ class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProv
   Future<void> _openCamera() async {
     final router = GoRouter.maybeOf(context);
     final navigator = Navigator.of(context);
-    final query = _placeId == null ? '' : '?placeId=${Uri.encodeQueryComponent(_placeId!)}';
+    final spawn = ref.read(nearestSpawnProvider(50));
+    final params = <String, String>{
+      'placeId': ?_placeId,
+      if (spawn != null) ...{
+        'spawnId': spawn.id,
+        'emoji': spawn.emoji,
+        'name': spawn.name,
+        'spawnLat': '${spawn.lat}',
+        'spawnLng': '${spawn.lng}',
+      },
+    };
+    final query =
+        params.isEmpty ? '' : '?${Uri(queryParameters: params).query}';
     final exit = router != null
         ? await router.push<CatchExit>('/catch/camera$query')
         : await navigator.push<CatchExit>(
