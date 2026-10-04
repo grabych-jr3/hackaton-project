@@ -16,8 +16,12 @@ import 'features/profile/profile_screen.dart';
 import 'features/rewards/rewards_screen.dart';
 import 'features/shell/home_shell.dart';
 
-GoRouter _buildRouter() => GoRouter(
-  initialLocation: '/map',
+/// Root navigator: fullscreen routes (camera) cover the bottom navigation.
+final rootNavigatorKey = GlobalKey<NavigatorState>();
+
+GoRouter buildAppRouter({String initialLocation = '/map'}) => GoRouter(
+  navigatorKey: rootNavigatorKey,
+  initialLocation: initialLocation,
   routes: [
     StatefulShellRoute.indexedStack(
       builder: (context, state, shell) => HomeShell(navigationShell: shell),
@@ -31,12 +35,15 @@ GoRouter _buildRouter() => GoRouter(
     ),
     GoRoute(
       path: '/catch/camera',
+      parentNavigatorKey: rootNavigatorKey, // fullscreen, no bottom nav
       builder: (context, state) =>
           ArCatchScreen(
         placeId: state.uri.queryParameters['placeId'],
         spawnId: state.uri.queryParameters['spawnId'],
         speciesEmoji: state.uri.queryParameters['emoji'],
         speciesName: state.uri.queryParameters['name'],
+        spawnLat: double.tryParse(state.uri.queryParameters['spawnLat'] ?? ''),
+        spawnLng: double.tryParse(state.uri.queryParameters['spawnLng'] ?? ''),
       ),
     ),
     GoRoute(
@@ -59,7 +66,7 @@ class KrakowBezBarierApp extends StatefulWidget {
 }
 
 class _KrakowBezBarierAppState extends State<KrakowBezBarierApp> {
-  late final _router = _buildRouter();
+  late final _router = buildAppRouter();
 
   @override
   Widget build(BuildContext context) {

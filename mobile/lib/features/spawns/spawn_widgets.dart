@@ -26,6 +26,8 @@ void openSpawnCamera(BuildContext context, Spawn spawn) {
     'spawnId': spawn.id,
     'emoji': spawn.emoji,
     'name': spawn.name,
+    'spawnLat': spawn.lat.toString(),
+    'spawnLng': spawn.lng.toString(),
   }).toString());
 }
 
