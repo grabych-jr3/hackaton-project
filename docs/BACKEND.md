@@ -438,7 +438,14 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
 
 **Демо-спавны (`kind = 'seed'`)** — `SpawnService.SEEDS` (14 шт. вокруг центра: Rynek, Sukiennice, Mariacka, Collegium Maius, Planty, Barbakan, Wawel (Smok, единственный legendary), Bulwary, Kazimierz, Kładka Bernatka, Podgórze, Muzeum Narodowe, Massolit, Schindler). `@Scheduled` при старте и каждые 10 мин делает upsert по `seed_key`: создаёт недостающие и продлевает `expires_at = now + 30 дней` — демо никогда не пустеет.
 
-`POST /api/v1/spawns/here` (auth) `{ "lat": 50.06, "lng": 19.93, "speciesId": "sowa" }` → `201` + объект спавна (как выше). Спавн ровно в точке, `kind = 'user'`, живёт 2 ч; без `speciesId` — случайный common/rare; неизвестный `speciesId` → `400`. Не более 3 активных user-спавнов на пользователя: самый старый истекает (`expires_at = now`). Нужен для теста AR-камеры на месте.
+`POST /api/v1/spawns/here` (auth) `{ "lat": 50.06, "lng": 19.93, "speciesId": "sowa" }` → `201` + объект спавна (как выше). Точка привязывается к улице (см. ниже), в ответе — уже скорректированные `lat`/`lng`; `kind = 'user'`, живёт 2 ч; без `speciesId` — случайный common/rare; неизвестный `speciesId` → `400`. Не более 3 активных user-спавнов на пользователя: самый старый истекает (`expires_at = now`). Нужен для теста AR-камеры на месте.
+
+**Спавны не внутри зданий (`SpawnSnapper`).** Каждая точка спавна (`/spawns/here` и демо-сиды) проходит цепочку:
+1. ORS Snap `POST /v2/snap/foot-walking/json` `{"locations":[[lng,lat]],"radius":60}` → ближайшая точка пешеходного графа; берётся, если `snapped_distance ≤ 60 м` (нужен `ORS_API_KEY`).
+2. Если ORS недоступен/нет ключа — Overpass (зеркала `app.overpass.urls` или дефолтный список, таймаут 5 с): `way["building"](around:15)` + `way["highway"~"footway|pedestrian|path|living_street|residential|service"](around:60)`; если точка внутри полигона здания — переносится на ближайшую точку ближайшей дороги/тротуара (≤ 60 м).
+3. Если всё упало — исходная точка.
+
+Сиды снапаются один раз и кешируются в таблице `spawn_seed_snap(seed_key, orig_lat, orig_lng, lat, lng, method, snapped_at)` (V6); пересчёт — только если исходные координаты сида в коде поменялись. Неудачный снап (`original`) не кешируется и повторяется при следующем refresh.
 
 **Поимка спавна:** если у catch есть `spawnId` и анализ `OK` — пользователь получает **вид этого спавна** (не бросок по severity), спавн помечается пойманным (`spawn_catch(user_id, spawn_id)` → `caughtByMe: true`). Спавн не исчезает — его могут поймать и другие. Без `spawnId` — прежнее поведение.
 

@@ -23,13 +23,16 @@ class SpawnServiceTest {
     JdbcTemplate jdbc;
     GameService game;
     SpawnService svc;
+    SpawnSnapper snapper;
     final UUID user = UUID.randomUUID();
 
     @BeforeEach
     void setUp() throws Exception {
         jdbc = mock(JdbcTemplate.class);
         game = new GameService(jdbc, om, mock(PointsService.class), mock(PlaceRepository.class));
-        svc = new SpawnService(jdbc, game);
+        snapper = mock(SpawnSnapper.class);
+        when(snapper.snap(anyDouble(), anyDouble())).thenAnswer(i -> new SpawnSnapper.Result(i.getArgument(0), i.getArgument(1), SpawnSnapper.Method.original, 0));
+        svc = new SpawnService(jdbc, game, snapper);
     }
 
     @Test
@@ -104,5 +107,33 @@ class SpawnServiceTest {
         verify(jdbc, never()).update(contains("SET expires_at = now()"), any(Object[].class));
         assertThrows(ApiException.class, () -> svc.spawnHere(user, new SpawnService.SpawnHereRequest(50.0, 19.0, "nope")));
         assertThrows(ApiException.class, () -> svc.spawnHere(user, new SpawnService.SpawnHereRequest(null, 19.0, null)));
+    }
+
+    @Test
+    void spawnHereReturnsSnappedCoordinates() {
+        when(snapper.snap(50.06, 19.93)).thenReturn(new SpawnSnapper.Result(50.0601, 19.9302, SpawnSnapper.Method.ors, 15));
+        var dto = svc.spawnHere(user, new SpawnService.SpawnHereRequest(50.06, 19.93, "sowa"));
+        assertEquals(50.0601, dto.lat());
+        assertEquals(19.9302, dto.lng());
+        verify(jdbc).update(contains("'user'"), any(), eq(19.9302), eq(50.0601), eq("sowa"), eq("rare"), any(), eq(user));
+    }
+
+    @Test
+    void seedSnapIsCachedAndReused() {
+        SpawnService.Seed s = SpawnService.SEEDS.get(0);
+        when(snapper.snap(s.lat(), s.lng())).thenReturn(new SpawnSnapper.Result(50.1, 19.9, SpawnSnapper.Method.overpass, 7));
+        Map<String, double[]> cache = new HashMap<>();
+        assertArrayEquals(new double[]{50.1, 19.9}, svc.seedPoint(s, cache));
+        verify(jdbc).update(contains("INSERT INTO spawn_seed_snap"), eq(s.key()), eq(s.lat()), eq(s.lng()), eq(50.1), eq(19.9), eq("overpass"));
+
+        reset(snapper, jdbc);
+        cache.put(s.key(), new double[]{s.lat(), s.lng(), 50.2, 19.8});
+        assertArrayEquals(new double[]{50.2, 19.8}, svc.seedPoint(s, cache));
+        verifyNoInteractions(snapper, jdbc);
+
+        // failure (original) is returned but not cached -> retried next refresh
+        when(snapper.snap(anyDouble(), anyDouble())).thenAnswer(i -> new SpawnSnapper.Result(i.getArgument(0), i.getArgument(1), SpawnSnapper.Method.original, 0));
+        assertArrayEquals(new double[]{s.lat(), s.lng()}, svc.seedPoint(s, new HashMap<>()));
+        verify(jdbc, never()).update(contains("spawn_seed_snap"), any(Object[].class));
     }
 }

@@ -50,11 +50,29 @@ public class SpawnService {
 
     private final JdbcTemplate jdbc;
     private final GameService game;
+    private final SpawnSnapper snapper;
     private final SecureRandom random = new SecureRandom();
 
-    public SpawnService(JdbcTemplate jdbc, GameService game) {
+    public SpawnService(JdbcTemplate jdbc, GameService game, SpawnSnapper snapper) {
         this.jdbc = jdbc;
         this.game = game;
+        this.snapper = snapper;
+    }
+
+    /** Seed coordinates snapped outdoors, cached in spawn_seed_snap (re-snapped only if the seed's original point changes). */
+    double[] seedPoint(Seed s, Map<String, double[]> cache) {
+        double[] c = cache.get(s.key());
+        if (c != null && c[0] == s.lat() && c[1] == s.lng()) return new double[]{c[2], c[3]};
+        SpawnSnapper.Result r = snapper.snap(s.lat(), s.lng());
+        if (r.method() != SpawnSnapper.Method.original) { // failures are not cached -> retried next refresh
+            jdbc.update("""
+                    INSERT INTO spawn_seed_snap (seed_key, orig_lat, orig_lng, lat, lng, method) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (seed_key) DO UPDATE SET orig_lat = EXCLUDED.orig_lat, orig_lng = EXCLUDED.orig_lng,
+                      lat = EXCLUDED.lat, lng = EXCLUDED.lng, method = EXCLUDED.method, snapped_at = now()""",
+                    s.key(), s.lat(), s.lng(), r.lat(), r.lng(), r.method().name());
+            log.info("Seed {} snapped via {} ({} m)", s.key(), r.method(), Math.round(r.movedM()));
+        }
+        return new double[]{r.lat(), r.lng()};
     }
 
     /** Runs at startup and every 10 min: (re)creates every seed and pushes expires_at to now + 30 days. */
@@ -62,14 +80,18 @@ public class SpawnService {
     public void refreshSeeds() {
         try {
             int n = 0;
+            Map<String, double[]> cache = new HashMap<>();
+            jdbc.query("SELECT seed_key, orig_lat, orig_lng, lat, lng FROM spawn_seed_snap", (org.springframework.jdbc.core.RowCallbackHandler) rs ->
+                    cache.put(rs.getString(1), new double[]{rs.getDouble(2), rs.getDouble(3), rs.getDouble(4), rs.getDouble(5)}));
             for (Seed s : SEEDS) {
+                double[] p = seedPoint(s, cache);
                 Species sp = game.species(s.speciesId()).orElseThrow();
                 n += jdbc.update("""
                         INSERT INTO creature_spawn (id, geom, species, rarity, expires_at, kind, seed_key)
                         VALUES (?, ST_SetSRID(ST_MakePoint(?, ?), 4326), ?, ?, now() + interval '30 days', 'seed', ?)
                         ON CONFLICT (seed_key) DO UPDATE SET expires_at = EXCLUDED.expires_at,
                           geom = EXCLUDED.geom, species = EXCLUDED.species, rarity = EXCLUDED.rarity""",
-                        UUID.randomUUID(), s.lng(), s.lat(), sp.id(), sp.rarity().name(), s.key());
+                        UUID.randomUUID(), p[1], p[0], sp.id(), sp.rarity().name(), s.key());
             }
             log.debug("Refreshed {} seed spawns", n);
         } catch (Exception e) {
@@ -127,6 +149,9 @@ public class SpawnService {
         for (int i = 0; i <= active.size() - MAX_USER_SPAWNS; i++) {
             jdbc.update("UPDATE creature_spawn SET expires_at = now() WHERE id = ?", active.get(i));
         }
+        SpawnSnapper.Result snapped = snapper.snap(lat, lng); // never inside a building
+        lat = snapped.lat();
+        lng = snapped.lng();
         UUID id = UUID.randomUUID();
         Instant expires = Instant.now().plus(USER_TTL);
         jdbc.update("""
