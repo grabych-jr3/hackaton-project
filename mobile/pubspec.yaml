@@ -46,6 +46,7 @@ dependencies:
   sensors_plus: ^7.1.1
   http_parser: ^4.1.2
   flutter_compass: ^0.8.1
+  flutter_rotation_sensor: 0.2.0
 
 dev_dependencies:
   flutter_test:

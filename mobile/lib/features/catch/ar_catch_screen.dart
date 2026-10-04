@@ -3,25 +3,40 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
-import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:sensors_plus/sensors_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../data/repositories/catch_repository.dart';
 import '../game/game_models.dart';
-import 'ar_math.dart';
+import 'ar_projection.dart';
 import 'ar_sensors.dart';
+import '../spawns/spawn_providers.dart';
 import 'gps_smoother.dart';
 import 'pending_catches.dart';
 
 /// Shown right after the shutter.
 const photoSavedMessage =
     'Zdjęcie zapisane — analizujemy w tle. Damy znać, gdy stworek się pojawi.';
+
+/// Shown when the photo was taken farther than [arCatchDistanceM] away.
+const barrierOnlyMessage =
+    'Zdjęcie bariery zapisane — stworek jest za daleko, nie został złapany';
+
+/// Hint in free mode without any spawn nearby.
+const noSpawnsHint = 'Brak stworków w pobliżu — postaw stworka na mapie';
+
+/// Creature is caught only within this distance (m).
+const arCatchDistanceM = 20.0;
+
+/// Free mode looks for spawns within this radius (m).
+const arFreeModeRadiusM = 50.0;
+
+/// shared_preferences key of the tuned horizontal FOV.
+const arHFovPrefKey = 'ar_hfov_deg';
 
 /// How the AR camera screen was left (popped as the route result).
 enum CatchExit {
@@ -32,10 +47,17 @@ enum CatchExit {
   collection,
 }
 
-/// AR catch screen (ported from Bogdan's AR-update): live camera preview with
-/// a creature sprite placed by device pitch, take a picture → `POST /catches`
-/// → poll the vision result. Falls back to the survey when the camera, the
-/// location or the AI is unavailable — the analysis is never faked.
+/// What the AR sprite is anchored to.
+class _ArTarget {
+  const _ArTarget(this.id, this.lat, this.lng, this.emoji);
+  final String? id;
+  final double lat, lng;
+  final String? emoji;
+}
+
+/// AR catch screen: live camera preview with the creature sprite projected in
+/// full 3D through the OS rotation matrix (see ar_projection.dart). Take a
+/// picture → background upload via [pendingCatchesProvider] → back to /map.
 class ArCatchScreen extends ConsumerStatefulWidget {
   const ArCatchScreen({
     super.key,
@@ -57,6 +79,7 @@ class ArCatchScreen extends ConsumerStatefulWidget {
   final String? speciesName;
 
   /// Geographic anchor of the creature; both set = geo-anchored AR mode.
+  /// Otherwise free mode: the nearest spawn within 50 m is shown.
   final double? spawnLat;
   final double? spawnLng;
 
@@ -78,76 +101,58 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
   bool _initializing = true;
   String? _error;
 
-  StreamSubscription<AccelerometerEvent>? _accelSub;
-  double _pitch = (_minPitch + _maxPitch) / 2; // radians; negative = down
-  bool _hasSensor = false;
-
-  double? _lat;
-  double? _lng;
+  final List<StreamSubscription<dynamic>> _subs = [];
+  final _gps = GpsSmoother();
+  final _screen = ScreenSmoother();
+  List<double>? _m;
+  double? _lat, _lng;
+  double? _rawAccuracy;
   bool _gpsFailed = false;
+  ({double e, double n, double u})? _goodEnu;
+  String? _goodEnuFor; // target key the cached ENU belongs to
+  ArProjection? _proj;
+  ({double x, double y})? _pos;
 
+  double _hFov = arDefaultHFovDeg;
   bool _capturing = false;
-
-  // --- geo-anchored mode ---
-  final List<StreamSubscription<dynamic>> _geoSubs = [];
-  final _smoother = GpsSmoother();
-  BearingFreeze? _freeze;
-  double? _heading; // deg
-  double? _headingAccuracy;
-  bool _headingReliable = true;
-  double? _elevation; // deg, EMA-smoothed camera elevation
-  double? _rawAccuracy; // last raw GPS accuracy
-  double? _screenRel; // smoothed on-screen angle (anti-float)
-  DateTime? _screenRelAt;
   bool _showDebug = false;
   String? _liveHint;
   DateTime _liveHintAt = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _liveHintTimer;
-  static const _fovDeg = defaultHorizontalFovDeg; // camera plugin exposes no FOV
 
-  late final String _spriteEmoji;
+  late final String _fallbackEmoji;
   late final AnimationController _bob;
 
-  // Working pitch range: camera pointing ~20°–70° below the horizon.
-  static const _minPitch = -1.22;
-  static const _maxPitch = -0.35;
-
-  /// Without an accelerometer (web, desktop) the tilt hint is skipped.
-  bool get _pitchOk => !_hasSensor || (_pitch >= _minPitch && _pitch <= _maxPitch);
   bool get _cameraOn => widget.cameraEnabled && ref.read(arCameraEnabledProvider);
+  bool get _cameraReady =>
+      widget.takePictureOverride != null ||
+      !_cameraOn ||
+      (_cam?.value.isInitialized ?? false);
+  bool get _canCapture => _cameraReady && _lat != null && !_capturing;
 
-  bool get _geoReady =>
-      _heading != null && _distance != null && _bearing != null;
-  double? get _distance => _freeze?.distanceM;
-  double? get _bearing => _freeze?.bearingDeg;
-  double get _gpsError => _smoother.position?.errorM ?? 0;
-  double? get _rel => _geoReady ? relativeBearing(_bearing!, _heading!) : null;
-  ArMode? get _mode =>
-      _geoReady ? arModeFor(distanceM: _distance!, gpsErrorM: _gpsError) : null;
-  bool get _geoCatchOk =>
-      _geoReady && canCatchAt(relDeg: _rel!, distanceM: _distance!, mode: _mode!);
-  bool get _canCapture => (widget.geoMode ? _geoCatchOk : _pitchOk) &&
-      _lat != null &&
-      !_capturing;
+  _ArTarget? get _target {
+    if (widget.geoMode) {
+      return _ArTarget(
+          widget.spawnId, widget.spawnLat!, widget.spawnLng!, widget.speciesEmoji);
+    }
+    final s = ref.read(nearestSpawnProvider(arFreeModeRadiusM));
+    return s == null ? null : _ArTarget(s.id, s.lat, s.lng, s.emoji);
+  }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     const emojis = ['🐉', '🦉', '🦊', '🐺', '🦎', '🐸', '🦋', '🐾'];
-    _spriteEmoji = widget.speciesEmoji ?? emojis[Random().nextInt(emojis.length)];
+    _fallbackEmoji = widget.speciesEmoji ?? emojis[Random().nextInt(emojis.length)];
     _bob = AnimationController(vsync: this, duration: const Duration(milliseconds: 1800));
     if (_cameraOn) {
       _initCamera();
     } else {
       _initializing = false;
     }
-    if (widget.geoMode) {
-      _listenGeo();
-    } else {
-      _listenSensors();
-      _fetchLocation();
-    }
+    _loadFov();
+    _listen();
   }
 
   @override
@@ -158,6 +163,24 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     } else if (!_bob.isAnimating) {
       _bob.repeat(reverse: true);
     }
+  }
+
+  Future<void> _loadFov() async {
+    try {
+      final v = (await SharedPreferences.getInstance()).getDouble(arHFovPrefKey);
+      if (v != null && mounted) {
+        setState(() => _hFov = v.clamp(30.0, 90.0));
+        _recompute();
+      }
+    } catch (_) {
+      // No prefs (tests without mock values): keep the default.
+    }
+  }
+
+  Future<void> _saveFov(double v) async {
+    try {
+      await (await SharedPreferences.getInstance()).setDouble(arHFovPrefKey, v);
+    } catch (_) {}
   }
 
   Future<void> _initCamera() async {
@@ -198,72 +221,30 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     });
   }
 
-  void _listenSensors() {
+  void _listen() {
     try {
-      _accelSub = accelerometerEventStream(
-        samplingPeriod: const Duration(milliseconds: 100),
-      ).listen(
-        (e) {
-          if (!mounted) return;
-          setState(() {
-            _hasSensor = true;
-            _pitch = -atan2(e.y, e.z);
-          });
-        },
-        onError: (Object _) {},
-        cancelOnError: true,
-      );
+      _subs.add(ref.read(arRotationMatrixProvider).listen((m) {
+        if (!mounted || m.length != 9) return;
+        _m = m;
+        _recompute();
+      }, onError: (Object _) {}));
     } catch (_) {
-      // No accelerometer (web/desktop): capture is not gated on tilt.
+      // No orientation sensors on this platform.
     }
-  }
-
-  void _listenGeo() {
-    _freeze = BearingFreeze(targetLat: widget.spawnLat!, targetLng: widget.spawnLng!);
-    void sub<T>(Stream<T> Function() make, void Function(T) on) {
-      try {
-        _geoSubs.add(make().listen((e) {
-          if (!mounted) return;
-          setState(() {
-            on(e);
-            _updateScreenRel();
-          });
-          _updateLiveHint();
-        }, onError: (Object _) {}, cancelOnError: true));
-      } catch (_) {
-        // Sensor missing on this platform.
-      }
-    }
-
-    sub<ArHeading>(() => ref.read(arHeadingProvider), (h) {
-      _heading = wrap360(h.degrees);
-      _headingAccuracy = h.accuracyDeg;
-      _headingReliable = h.reliable;
-    });
-    sub<double>(() => ref.read(arPitchProvider), (rad) {
-      _hasSensor = true;
-      final deg = rad * 180 / pi;
-      final prev = _elevation;
-      _elevation = prev == null ? deg : prev + arScreenEmaAlpha * (deg - prev);
-    });
     try {
-      _geoSubs.add(ref.read(arPositionStreamProvider)().listen((pos) {
+      _subs.add(ref.read(arPositionStreamProvider)().listen((pos) {
         if (!mounted) return;
-        setState(() {
-          _rawAccuracy = pos.accuracy;
-          _gpsFailed = false;
-          _smoother.add(GpsFix(
-              lat: pos.latitude,
-              lng: pos.longitude,
-              accuracyM: pos.accuracy,
-              time: pos.timestamp));
-          final p = _smoother.position!;
-          _lat = p.lat;
-          _lng = p.lng;
-          _freeze!.update(p);
-          _updateScreenRel();
-        });
-        _updateLiveHint();
+        _rawAccuracy = pos.accuracy;
+        _gpsFailed = false;
+        _gps.add(GpsFix(
+            lat: pos.latitude,
+            lng: pos.longitude,
+            accuracyM: pos.accuracy,
+            time: pos.timestamp));
+        final p = _gps.position!;
+        _lat = p.lat;
+        _lng = p.lng;
+        _recompute();
       }, onError: (Object _) {
         if (mounted && _lat == null) setState(() => _gpsFailed = true);
       }));
@@ -272,34 +253,68 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     }
   }
 
-  /// Anti-float: EMA in angle space; near-field additionally rate-limited.
-  void _updateScreenRel() {
-    final rel = _rel;
-    if (rel == null) return;
-    final now = DateTime.now();
-    final prev = _screenRel;
-    if (_mode == ArMode.nearField) {
-      final target = nearFieldTargetRel(rel, _distance!, _gpsError);
-      final dt = _screenRelAt == null
-          ? 0.0
-          : (now.difference(_screenRelAt!).inMicroseconds / 1e6).clamp(0.0, 0.5);
-      _screenRel = prev == null
-          ? target
-          : rateLimitAngle(prev, emaRelAngle(prev, target), dt);
-    } else {
-      _screenRel = emaRelAngle(prev, rel);
+  /// User→target ENU; when the GPS error exceeds the distance the last good
+  /// ENU is kept (the sprite never re-centres on GPS noise).
+  ({double e, double n, double u})? _enuFor(_ArTarget t) {
+    final lat = _lat, lng = _lng;
+    if (lat == null || lng == null) return null;
+    final key = '${t.id}|${t.lat}|${t.lng}';
+    if (_goodEnuFor != key) {
+      _goodEnu = null;
+      _goodEnuFor = key;
     }
-    _screenRelAt = now;
+    final enu = enuOffset(lat, lng, t.lat, t.lng);
+    final dist = sqrt(enu.e * enu.e + enu.n * enu.n);
+    final err = _gps.position?.errorM ?? 0;
+    if (err > dist && _goodEnu != null) return _goodEnu;
+    return _goodEnu = enu;
   }
 
-  String? get _geoHint {
-    if (!_geoReady) return null;
-    return arHint(relDeg: _rel!, distanceM: _distance!, mode: _mode!, fovDeg: _fovDeg);
+  void _recompute() {
+    if (!mounted) return;
+    final t = _target;
+    final m = _m;
+    final enu = t == null ? null : _enuFor(t);
+    ArProjection? proj;
+    if (m != null && enu != null) {
+      final size = MediaQuery.sizeOf(context);
+      final fov = croppedFov(
+          hFovDeg: _hFov,
+          vFovDeg: vFovForHFov(_hFov),
+          screenW: size.width,
+          screenH: size.height);
+      proj = projectTarget(
+          m: m,
+          enu: enu,
+          screenW: size.width,
+          screenH: size.height,
+          hFovDeg: fov.h,
+          vFovDeg: fov.v);
+    }
+    setState(() {
+      _proj = proj;
+      _pos = proj == null ? null : _screen.add(proj);
+    });
+    _updateLiveHint();
+  }
+
+  String get _hint {
+    if (_lat == null) return 'Czekam na GPS…';
+    if (_target == null) return noSpawnsHint;
+    final p = _proj;
+    if (p == null) return 'Czekam na czujniki orientacji…';
+    final d = p.distanceM.round();
+    if (!p.visible) {
+      return 'Obróć się w ${p.edge < 0 ? 'lewo' : 'prawo'} — stworek $d m';
+    }
+    return p.distanceM <= arCatchDistanceM
+        ? 'Stworek przed Tobą — zrób zdjęcie'
+        : 'Podejdź bliżej — stworek $d m stąd';
   }
 
   /// Screen-reader live region text, throttled to one change per 2 s.
   void _updateLiveHint() {
-    final next = _geoHint;
+    final next = _hint;
     if (next == _liveHint) return;
     final since = DateTime.now().difference(_liveHintAt);
     const gap = Duration(seconds: 2);
@@ -316,45 +331,24 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     }
   }
 
-  Future<void> _fetchLocation() async {
-    try {
-      if (!kIsWeb && !await Geolocator.isLocationServiceEnabled()) {
-        throw StateError('off');
-      }
-      var perm = await Geolocator.checkPermission();
-      if (perm == LocationPermission.denied) {
-        perm = await Geolocator.requestPermission();
-      }
-      if (perm == LocationPermission.denied ||
-          perm == LocationPermission.deniedForever) {
-        throw StateError('denied');
-      }
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 10),
-        ),
-      );
-      if (!mounted) return;
-      setState(() {
-        _lat = pos.latitude;
-        _lng = pos.longitude;
-      });
-    } catch (_) {
-      if (mounted) setState(() => _gpsFailed = true);
-    }
-  }
-
   Future<void> _capture() async {
     final cam = _cam;
     final repo = ref.read(catchRepositoryProvider);
     final shoot = widget.takePictureOverride;
     if (!_canCapture) return;
-    if (shoot == null && (cam == null || !cam.value.isInitialized)) return;
+    if (shoot == null && _cameraOn && (cam == null || !cam.value.isInitialized)) {
+      return;
+    }
     if (repo == null) {
       Navigator.of(context).pop(CatchExit.survey);
       return;
     }
+    final target = _target;
+    final enu = target == null ? null : _enuFor(target);
+    final dist = enu == null ? null : sqrt(enu.e * enu.e + enu.n * enu.n);
+    final caught = target != null && dist != null && dist <= arCatchDistanceM;
+    final message =
+        target != null && !caught ? barrierOnlyMessage : photoSavedMessage;
     setState(() => _capturing = true);
     // Global messenger: the snackbar survives the jump back to the map.
     final messenger = catchMessengerKey.currentState ?? ScaffoldMessenger.of(context);
@@ -370,11 +364,11 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
             lat: _lat!,
             lng: _lng!,
             placeId: widget.placeId,
-            spawnId: widget.spawnId,
+            spawnId: caught ? target.id : null,
           );
       messenger.hideCurrentSnackBar();
-      messenger.showSnackBar(const SnackBar(content: Text(photoSavedMessage)));
-      SemanticsService.sendAnnouncement(view, photoSavedMessage, dir);
+      messenger.showSnackBar(SnackBar(content: Text(message)));
+      SemanticsService.sendAnnouncement(view, message, dir);
       // One photo per visit: back to the map (branch state is kept).
       if (mounted) {
         if (GoRouter.maybeOf(context) != null) {
@@ -406,8 +400,7 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _accelSub?.cancel();
-    for (final s in _geoSubs) {
+    for (final s in _subs) {
       s.cancel();
     }
     _liveHintTimer?.cancel();
@@ -416,97 +409,115 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     super.dispose();
   }
 
-  List<Widget> _geoLayer(Size size, bool reduceMotion) {
-    final rel = _rel;
-    final shown = _screenRel ?? rel;
-    final mode = _mode;
+  List<Widget> _arLayer(Size size, bool reduceMotion) {
+    final p = _proj;
+    final pos = _pos;
     final out = <Widget>[];
-    if (rel != null && shown != null && mode == ArMode.far) {
-      // Radar: arrow pointing to the creature, sprite hidden.
-      out.add(Positioned(
-        left: 0,
-        right: 0,
-        top: size.height * 0.4,
-        child: ExcludeSemantics(
-          child: Center(
-            child: Transform.rotate(
-              angle: rel * pi / 180,
-              child: const Icon(Icons.navigation,
-                  key: ValueKey('ar-radar'), color: Colors.white, size: 64),
-            ),
-          ),
-        ),
-      ));
-    } else if (rel != null && shown != null) {
-      if (inFov(shown, fovDeg: _fovDeg)) {
-        final px = spriteSizeForDistance(_distance!);
-        final x = screenX(shown, size.width, fovDeg: _fovDeg);
-        final y = screenY(_elevation ?? targetElevationDeg, size.width,
-            size.height, fovDeg: _fovDeg);
-        Widget sprite = Text(_spriteEmoji,
-            key: const ValueKey('ar-sprite'),
-            style: TextStyle(fontSize: px * 0.8, height: 1));
-        if (!reduceMotion) {
-          sprite = AnimatedBuilder(
-            animation: _bob,
-            builder: (_, child) => Transform.translate(
-                offset: Offset(0, -6 + 12 * _bob.value), child: child),
-            child: sprite,
-          );
-        }
-        out.add(Positioned(
-          left: x - px / 2,
-          top: y - px / 2,
-          width: px,
-          height: px,
-          child: ExcludeSemantics(child: Center(child: sprite)),
-        ));
-      } else {
-        final left = shown < 0;
-        out.add(Positioned(
-          left: left ? 8 : null,
-          right: left ? null : 8,
-          top: size.height / 2 - 28,
-          child: ExcludeSemantics(
-            child: Icon(left ? Icons.arrow_back_ios_new : Icons.arrow_forward_ios,
-                key: ValueKey(left ? 'ar-arrow-left' : 'ar-arrow-right'),
-                color: Colors.white,
-                size: 56),
-          ),
-        ));
+    final t = _target;
+    if (p != null && pos != null && p.visible) {
+      final px = p.size;
+      Widget sprite = Text(t?.emoji ?? _fallbackEmoji,
+          key: const ValueKey('ar-sprite'),
+          style: TextStyle(fontSize: px * 0.8, height: 1));
+      if (!reduceMotion) {
+        sprite = AnimatedBuilder(
+          animation: _bob,
+          builder: (_, child) => Transform.translate(
+              offset: Offset(0, -6 + 12 * _bob.value), child: child),
+          child: sprite,
+        );
       }
-    }
-    if (_showDebug) {
-      String f(double? v, [int d = 0]) => v == null ? '-' : v.toStringAsFixed(d);
       out.add(Positioned(
-        top: 100,
-        left: 12,
-        child: Container(
-          key: const ValueKey('ar-debug'),
-          padding: const EdgeInsets.all(8),
-          color: Colors.black87,
-          child: Text(
-            'kurs: ${f(_heading)}° (±${f(_headingAccuracy)}°)\n'
-            'namiar: ${f(_bearing)}°${(_freeze?.frozen ?? false) ? ' (zamrożony)' : ''}\n'
-            'różnica: ${f(rel)}° / ekran ${f(shown)}°\n'
-            'nachylenie: ${f(_elevation)}°\n'
-            'dystans: ${f(_distance, 1)} m\n'
-            'GPS surowy: ±${f(_rawAccuracy, 1)} m\n'
-            'GPS wygładzony: ±${f(_smoother.position?.errorM, 1)} m\n'
-            'odrzucone odczyty: ${_smoother.rejectedCount}\n'
-            'tryb: ${mode?.name ?? '-'}\n'
-            'namiar wiarygodny: ${mode == null ? '-' : mode == ArMode.nearField ? 'nie' : 'tak'}\n'
-            'kompas: ${_headingReliable ? 'OK' : 'kalibracja'}',
-            style: const TextStyle(color: Colors.white, fontSize: 12),
-          ),
+        left: pos.x - px / 2,
+        top: pos.y - px / 2,
+        width: px,
+        height: px,
+        child: ExcludeSemantics(
+            child: OverflowBox(
+                maxWidth: double.infinity,
+                maxHeight: double.infinity,
+                child: Center(child: sprite))),
+      ));
+    } else if (p != null && !p.visible) {
+      final left = p.edge < 0;
+      out.add(Positioned(
+        left: left ? 8 : null,
+        right: left ? null : 8,
+        top: size.height / 2 - 28,
+        child: ExcludeSemantics(
+          child: Icon(left ? Icons.arrow_back_ios_new : Icons.arrow_forward_ios,
+              key: ValueKey(left ? 'ar-arrow-left' : 'ar-arrow-right'),
+              color: Colors.white,
+              size: 56),
         ),
       ));
     }
+    if (_showDebug) out.add(_debugPanel());
     return out;
+  }
+
+  Widget _debugPanel() {
+    String f(double? v, [int d = 0]) =>
+        v == null || v.isNaN ? '-' : v.toStringAsFixed(d);
+    final m = _m;
+    final p = _proj;
+    final source = m is ArRotationMatrix
+        ? (m.source == ArRotationSource.os ? 'OS rotation vector' : 'kompas + grawitacja')
+        : m == null
+            ? 'brak'
+            : 'zewnętrzne';
+    final yaw = m == null ? null : (cameraYawDeg(m) + arDeclinationDeg) % 360;
+    return Positioned(
+      top: 100,
+      left: 12,
+      right: 12,
+      child: Container(
+        key: const ValueKey('ar-debug'),
+        padding: const EdgeInsets.all(8),
+        color: Colors.black87,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'źródło obrotu: $source\n'
+              'yaw (prawdziwa płn.): ${f(yaw)}°\n'
+              'dx/dy/dz: ${f(p?.dx, 1)} / ${f(p?.dy, 1)} / ${f(p?.dz, 1)} m\n'
+              'głębokość: ${f(p?.depth, 1)} m\n'
+              'sx/sy: ${f(_pos?.x ?? p?.sx)} / ${f(_pos?.y ?? p?.sy)} px\n'
+              'dystans: ${f(p?.distanceM, 1)} m\n'
+              'GPS surowy: ±${f(_rawAccuracy, 1)} m\n'
+              'GPS wygładzony: ±${f(_gps.position?.errorM, 1)} m\n'
+              'hFov: ${f(_hFov)}°',
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+            ),
+            Slider(
+              key: const ValueKey('ar-fov-slider'),
+              value: _hFov,
+              min: 30,
+              max: 90,
+              divisions: 60,
+              label: '${_hFov.round()}°',
+              onChanged: (v) {
+                setState(() => _hFov = v);
+                _recompute();
+              },
+              onChangeEnd: _saveFov,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    // Free mode: re-project when the nearest spawn changes.
+    if (!widget.geoMode) {
+      ref.listen(nearestSpawnProvider(arFreeModeRadiusM), (_, _) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _recompute());
+      });
+    }
     final cam = _cam;
     if (_error != null) {
       return _Unavailable(message: _error!);
@@ -522,8 +533,6 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     }
 
     final size = MediaQuery.sizeOf(context);
-    final pitchNorm = ((_pitch - _minPitch) / (_maxPitch - _minPitch)).clamp(0.0, 1.0);
-    final spriteTop = size.height * 0.25 + pitchNorm * (size.height * 0.35);
     final preview = cam?.value.previewSize;
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
 
@@ -533,54 +542,21 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
         fit: StackFit.expand,
         children: [
           if (cam != null)
-          ExcludeSemantics(
-            child: ClipRect(
-              child: preview == null
-                  ? CameraPreview(cam)
-                  : FittedBox(
-                      fit: BoxFit.cover,
-                      child: SizedBox(
-                        width: preview.height,
-                        height: preview.width,
-                        child: CameraPreview(cam),
+            ExcludeSemantics(
+              child: ClipRect(
+                child: preview == null
+                    ? CameraPreview(cam)
+                    : FittedBox(
+                        fit: BoxFit.cover,
+                        child: SizedBox(
+                          width: preview.height,
+                          height: preview.width,
+                          child: CameraPreview(cam),
+                        ),
                       ),
-                    ),
-            ),
-          ),
-          if (widget.geoMode) ..._geoLayer(size, reduceMotion),
-          if (!widget.geoMode && _pitchOk)
-            Positioned(
-              top: spriteTop,
-              left: 0,
-              right: 0,
-              child: ExcludeSemantics(
-                child: AnimatedBuilder(
-                  animation: _bob,
-                  builder: (_, child) => Transform.translate(
-                    offset: Offset(0, -6 + 12 * _bob.value),
-                    child: child,
-                  ),
-                  child: Center(
-                    child: Text(_spriteEmoji, style: const TextStyle(fontSize: 56)),
-                  ),
-                ),
               ),
             ),
-          if (!widget.geoMode && !_pitchOk)
-            Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-                decoration: BoxDecoration(
-                  color: Colors.black87,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Text(
-                  'Skieruj kamerę w dół\nna barierę lub chodnik',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white, fontSize: 15),
-                ),
-              ),
-            ),
+          ..._arLayer(size, reduceMotion),
           Positioned(
             top: 0,
             left: 0,
@@ -596,12 +572,11 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
                       tooltip: 'Zamknij aparat',
                     ),
                     const Spacer(),
-                    if (widget.geoMode)
-                      IconButton(
-                        onPressed: () => setState(() => _showDebug = !_showDebug),
-                        icon: const Icon(Icons.info_outline, color: Colors.white),
-                        tooltip: 'Dane diagnostyczne',
-                      ),
+                    IconButton(
+                      onPressed: () => setState(() => _showDebug = !_showDebug),
+                      icon: const Icon(Icons.info_outline, color: Colors.white),
+                      tooltip: 'Dane diagnostyczne',
+                    ),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
@@ -633,32 +608,21 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (_capturing)
-                      const _Hint('Analizuję zdjęcie… To może potrwać do 30 s.')
+                      const _Hint('Zapisuję zdjęcie…')
                     else if (_gpsFailed)
                       const _Hint('Brak lokalizacji — zdjęcie wymaga GPS.')
-                    else if (widget.geoMode) ...[
-                      if (!_headingReliable)
-                        const Padding(
-                          padding: EdgeInsets.only(bottom: 6),
-                          child: _Hint('Skalibruj kompas: porusz telefonem ósemką'),
-                        ),
+                    else
                       Semantics(
                         liveRegion: true,
                         label: _liveHint ?? '',
                         excludeSemantics: true,
-                        child: _Hint(_geoHint ??
-                            (_lat == null ? 'Czekam na GPS…' : 'Czekam na kompas…')),
+                        child: _Hint(_hint),
                       ),
-                    ] else if (!_canCapture)
-                      _Hint(!_pitchOk ? 'Skieruj kamerę na barierę' : 'Czekam na GPS…'),
                     const SizedBox(height: 8),
                     Semantics(
                       button: true,
                       enabled: _canCapture,
                       label: 'Zrób zdjęcie i złap stworka',
-                      hint: widget.geoMode && !_canCapture
-                          ? 'Niedostępne: wyceluj w stworka z odległości do 20 m'
-                          : null,
                       excludeSemantics: true,
                       onTap: _canCapture ? _capture : null,
                       child: InkWell(
