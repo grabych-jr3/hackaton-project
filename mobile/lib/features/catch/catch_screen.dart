@@ -10,6 +10,7 @@ import '../game/game_models.dart';
 import '../game/game_providers.dart';
 import '../place/status_chip.dart';
 import 'ar_catch_screen.dart';
+import 'pending_catches.dart';
 
 const currentLocationLabel = 'Obecna lokalizacja';
 const demoCameraMessage =
@@ -242,9 +243,16 @@ class _CatchScreenState extends ConsumerState<CatchScreen> with SingleTickerProv
           ),
         ],
       ),
-      body: _isCameraMode
-          ? _buildMinimalistCameraView(points)
-          : _buildManualSurveyView(points),
+      body: Column(
+        children: [
+          Expanded(
+            child: _isCameraMode
+                ? _buildMinimalistCameraView(points)
+                : _buildManualSurveyView(points),
+          ),
+          const PendingCatchesSection(),
+        ],
+      ),
     );
   }
 

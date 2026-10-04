@@ -7,6 +7,7 @@ import 'core/widgets/phone_frame.dart';
 import 'data/repositories/profile_repository.dart';
 import 'features/catch/ar_catch_screen.dart';
 import 'features/catch/catch_screen.dart';
+import 'features/catch/pending_catches.dart' show catchMessengerKey;
 import 'features/collection/collection_screen.dart';
 import 'features/map/map_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
@@ -64,6 +65,7 @@ class _KrakowBezBarierAppState extends State<KrakowBezBarierApp> {
       darkTheme: AppTheme.dark(),
       themeMode: ThemeMode.dark,
       routerConfig: _router,
+      scaffoldMessengerKey: catchMessengerKey,
       builder: (context, child) => PhoneFrame(child: _ProfileGate(child: child!)),
     );
   }
