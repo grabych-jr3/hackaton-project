@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -66,6 +67,22 @@ class SpawnsNotifier extends AsyncNotifier<List<Spawn>> {
         .read(spawnAnchorsProvider.notifier)
         .put(spawn.id, ((headingDeg ?? 0) % 360 + 360) % 360, spawn.expiresAt);
     state = AsyncData(mergeSpawns(state.value ?? const <Spawn>[], local));
+    return spawn;
+  }
+
+  /// "Postaw stworka tutaj": ALWAYS takes a fresh real GPS fix (never the map
+  /// centre or a cached location), then places the creature [spawnAheadM]
+  /// ahead. Returns null (nothing created) without an accurate fix.
+  Future<Spawn?> spawnAtGps({double? headingDeg}) async {
+    final fix = await accurateSpawnFix(ref.read(freshGpsFixProvider));
+    if (fix == null) return null;
+    ref
+        .read(userLocationProvider.notifier)
+        .set(UserLocation(fix.point, accuracyM: fix.accuracyM));
+    final spawn = await spawnHere(fix.point, headingDeg: headingDeg);
+    debugPrint('spawn-here: GPS fix ${fix.point.latitude},${fix.point.longitude} '
+        '+-${fix.accuracyM.toStringAsFixed(0)} m, heading $headingDeg -> '
+        'spawn ${spawn.lat},${spawn.lng}');
     return spawn;
   }
 }

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -54,6 +55,9 @@ final _spawnJson = {
   'caughtByMe': true,
 };
 
+/// Fake geolocator fix used by "spawn here" (null = no fix).
+SpawnGpsFix? _fakeFix = (point: const LatLng(50.0617, 19.9373), accuracyM: 10);
+
 Future<void> _pumpApp(WidgetTester tester, SpawnRepository spawns) async {
   SharedPreferences.setMockInitialValues({
     'needs_profile': jsonEncode(NeedsProfile.wheelchair.toJson()),
@@ -66,6 +70,7 @@ Future<void> _pumpApp(WidgetTester tester, SpawnRepository spawns) async {
     overrides: [
       placesRepositoryProvider.overrideWithValue(_FileRepo()),
       currentHeadingProvider.overrideWithValue(() async => null),
+      freshGpsFixProvider.overrideWithValue(() async => _fakeFix),
       spawnRepositoryProvider.overrideWithValue(spawns),
     ],
     child: const KrakowBezBarierApp(),
@@ -75,7 +80,10 @@ Future<void> _pumpApp(WidgetTester tester, SpawnRepository spawns) async {
 
 void main() {
   setUpAll(() => GoogleFonts.config.allowRuntimeFetching = false);
-  setUp(() => SharedPreferences.setMockInitialValues({ApiClient.tokenKey: 'tok'}));
+  setUp(() {
+    SharedPreferences.setMockInitialValues({ApiClient.tokenKey: 'tok'});
+    _fakeFix = (point: const LatLng(50.0617, 19.9373), accuracyM: 10);
+  });
 
   test('API: GET /spawns parses a bare array and sends the bbox', () async {
     Uri? seen;
@@ -192,9 +200,11 @@ void main() {
 
     final container = ProviderScope.containerOf(
         tester.element(find.byType(KrakowBezBarierApp)));
+    // A stale cached location far away (e.g. SW corner of Kraków) must be
+    // ignored: only the fresh GPS fix counts, never the map centre.
     container
         .read(userLocationProvider.notifier)
-        .set(const UserLocation(LatLng(50.0617, 19.9373), accuracyM: 10));
+        .set(const UserLocation(LatLng(49.97674, 19.82533), accuracyM: 10));
     await tester.pumpAndSettle();
 
     final btn = find.byTooltip('Postaw stworka tutaj (test)');
@@ -217,6 +227,45 @@ void main() {
         findsOneWidget);
     final spawns = container.read(spawnsProvider).value!;
     expect(spawns.map((s) => s.id), contains('u-1'));
+    final camera = MapCamera.of(tester.element(find.byType(MarkerLayer).first));
+    expect(camera.center.latitude, closeTo(50.0617 + 8 / 111320, 1e-6));
+    expect(container.read(userLocationProvider)!.point,
+        const LatLng(50.0617, 19.9373));
+  });
+
+  for (final (name, fix) in <(String, SpawnGpsFix?)>[
+    ('no GPS fix', null),
+    ('inaccurate fix', (point: const LatLng(50.0617, 19.9373), accuracyM: 120.0)),
+  ]) {
+    testWidgets('spawn here with $name: no POST, snackbar', (tester) async {
+      final posts = <Object>[];
+      final api = ApiClient(
+          baseUrl: base,
+          client: MockClient((req) async {
+            if (req.method == 'POST') posts.add(req.body);
+            return _json(const []);
+          }));
+      _fakeFix = fix;
+      await _pumpApp(tester, ApiSpawnRepository(api));
+      await tester.tap(find.byTooltip('Postaw stworka tutaj (test)'));
+      await tester.pumpAndSettle();
+      expect(posts, isEmpty);
+      expect(find.text(spawnNoFixMessage), findsOneWidget);
+    });
+  }
+
+  test('spawnAtGps places the creature 8 m ahead of the fresh fix', () async {
+    const fix = LatLng(50.068, 19.99);
+    final c = ProviderContainer(overrides: [
+      freshGpsFixProvider
+          .overrideWithValue(() async => (point: fix, accuracyM: 5.0)),
+      spawnRepositoryProvider.overrideWithValue(DemoSpawnRepository()),
+    ]);
+    addTearDown(c.dispose);
+    for (final h in [0.0, 90.0, 213.0, 359.0]) {
+      final s = await c.read(spawnsProvider.notifier).spawnAtGps(headingDeg: h);
+      expect(const Distance()(fix, s!.point), inInclusiveRange(7.5, 8.5));
+    }
   });
 
   testWidgets('catch button is enabled only within the catch radius',

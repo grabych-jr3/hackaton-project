@@ -13,6 +13,8 @@ import 'package:hackaton_project/features/game/game_models.dart';
 import 'package:hackaton_project/features/route/route_start.dart';
 import 'package:hackaton_project/features/spawns/spawn.dart';
 import 'package:hackaton_project/features/spawns/spawn_providers.dart';
+import 'package:hackaton_project/features/spawns/spawn_offset.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:hackaton_project/features/spawns/spawn_repository.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -99,6 +101,8 @@ void main() {
       arRotationMatrixProvider.overrideWithValue(rot.stream),
       arPositionStreamProvider.overrideWithValue(() => gps.stream),
       spawnRepositoryProvider.overrideWithValue(repo),
+      freshGpsFixProvider.overrideWithValue(
+          () async => (point: const LatLng(_lat0, _lng0), accuracyM: 5.0)),
     ]);
     await tester.pumpWidget(UncontrolledProviderScope(
       container: container,

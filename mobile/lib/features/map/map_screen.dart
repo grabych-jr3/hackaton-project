@@ -322,11 +322,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     });
   }
 
-  /// Test helper: places a creature next to the user's GPS position.
+  /// Test helper: places a creature in front of the user's FRESH GPS fix
+  /// (never the map centre), then centres the map on it.
   Future<void> _spawnHere() async {
-    if (ref.read(userLocationProvider) == null) await _locate();
-    final here = ref.read(userLocationProvider)?.point;
-    if (!mounted || here == null) return;
     setState(() => _spawning = true);
     try {
       // In front of the user (heading) so it shows up in the AR camera.
@@ -334,8 +332,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       if (!mounted) return;
       final spawn = await ref
           .read(spawnsProvider.notifier)
-          .spawnHere(here, headingDeg: heading);
+          .spawnAtGps(headingDeg: heading);
       if (!mounted) return;
+      if (spawn == null) return _announce(spawnNoFixMessage);
       _mapController.move(spawn.point, 17);
       _announce('Stworek pojawił się obok Ciebie — otwórz aparat');
     } catch (_) {

@@ -18,6 +18,7 @@ import '../map/place_filters.dart' show formatDistance;
 import '../route/route_start.dart';
 import '../spawns/spawn.dart';
 import '../spawns/spawn_providers.dart';
+import '../spawns/spawn_offset.dart';
 import 'ar_projection.dart';
 import 'ar_sensors.dart';
 import 'gps_smoother.dart';
@@ -462,14 +463,19 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
   }
 
   Future<void> _spawnHere() async {
-    final lat = _lat, lng = _lng;
-    if (lat == null || lng == null || _placing) return;
+    if (_placing) return;
     setState(() => _placing = true);
     try {
+      // Always a fresh real GPS fix, never the smoothed/cached position.
       final s = await ref
           .read(spawnsProvider.notifier)
-          .spawnHere(LatLng(lat, lng), headingDeg: _yawTrue);
+          .spawnAtGps(headingDeg: _yawTrue);
       if (!mounted) return;
+      if (s == null) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+            const SnackBar(content: Text(spawnNoFixMessage)));
+        return;
+      }
       _selectedId = s.id;
       _recompute();
     } catch (_) {
