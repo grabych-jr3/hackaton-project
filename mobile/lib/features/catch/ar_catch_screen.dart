@@ -88,7 +88,7 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
   bool _capturing = false;
 
   // --- geo-anchored mode ---
-  final _fusion = HeadingFusion();
+  final _fusion = ArLiveState();
   final List<StreamSubscription<dynamic>> _geoSubs = [];
   double? _accuracy;
   double? _distance;
@@ -209,7 +209,6 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
   }
 
   void _listenGeo() {
-    final sensors = ref.read(arSensorStreamsProvider);
     void sub<T>(Stream<T> s, void Function(T) on) {
       try {
         _geoSubs.add(s.listen((e) {
@@ -222,12 +221,14 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
       }
     }
 
-    sub<Vec3>(sensors.accel, (e) {
+    sub<double>(ref.read(arPitchProvider), (rad) {
       _hasSensor = true;
-      _fusion.onAccel(e);
+      _fusion.elevation = rad * 180 / pi;
     });
-    sub<Vec3>(sensors.mag, _fusion.onMag);
-    sub<Vec3>(sensors.gyro, _fusion.onGyro);
+    sub<ArHeading>(ref.read(arHeadingProvider), (h) {
+      _fusion.heading = h.degrees;
+      _fusion.magValid = !h.needsCalibration;
+    });
     try {
       _geoSubs.add(ref.read(arPositionStreamProvider)().listen((pos) {
         if (!mounted) return;

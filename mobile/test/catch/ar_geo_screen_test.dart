@@ -32,7 +32,8 @@ Position _pos(double lat, double lng) => Position(
     );
 
 void main() {
-  late StreamController<Vec3> accel, mag, gyro;
+  late StreamController<Vec3> accel;
+  late StreamController<CompassReading> compass;
   late StreamController<Position> gps;
 
   Future<void> pump(WidgetTester tester, {required double spawnLat}) async {
@@ -43,13 +44,14 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     accel = StreamController();
-    mag = StreamController();
-    gyro = StreamController();
+    compass = StreamController();
     gps = StreamController();
     await tester.pumpWidget(ProviderScope(
       overrides: [
         arSensorStreamsProvider.overrideWithValue(
-            ArSensorStreams(accel: accel.stream, mag: mag.stream, gyro: gyro.stream)),
+            ArSensorStreams(accel: accel.stream)),
+        arCompassSourceProvider.overrideWithValue(compass.stream),
+        arCompassIsMagneticProvider.overrideWithValue(false),
         arPositionStreamProvider.overrideWithValue(() => gps.stream),
       ],
       child: MaterialApp(
@@ -64,10 +66,10 @@ void main() {
     ));
   }
 
-  Future<void> face(WidgetTester tester, Vec3 m) async {
+  Future<void> face(WidgetTester tester, double heading, {double acc = 10}) async {
     for (var i = 0; i < 80; i++) {
       accel.add(const Vec3(0, 9.81, 0));
-      mag.add(m);
+      compass.add(CompassReading(heading: heading, accuracyDeg: acc));
     }
     await tester.pump();
     await tester.pump();
@@ -84,7 +86,7 @@ void main() {
       (tester) async {
     await pump(tester, spawnLat: 52.00027); // ~30 m north
     gps.add(_pos(52.0, 21.0));
-    await face(tester, const Vec3(0, -40, -20)); // camera → north
+    await face(tester, 0); // camera → north
 
     expect(find.byKey(const ValueKey('ar-sprite')), findsOneWidget);
     expect(find.text('Stworek przed Tobą — zrób zdjęcie'), findsOneWidget);
@@ -92,7 +94,7 @@ void main() {
     final spriteCenter = tester.getCenter(find.byKey(const ValueKey('ar-sprite')));
     expect(spriteCenter.dx, closeTo(200, 2));
 
-    await face(tester, const Vec3(-20, -40, 0)); // camera → east
+    await face(tester, 90); // camera → east
     expect(find.byKey(const ValueKey('ar-sprite')), findsNothing);
     expect(find.byKey(const ValueKey('ar-arrow-left')), findsOneWidget);
     expect(find.text('Obróć się w lewo — stworek 30 m stąd'), findsOneWidget);
@@ -103,7 +105,7 @@ void main() {
     expect(find.byKey(const ValueKey('ar-debug')), findsOneWidget);
     expect(find.textContaining('dystans: 30.'), findsOneWidget);
 
-    await face(tester, const Vec3(0, 0, 3)); // bogus field
+    await face(tester, 90, acc: 60); // low accuracy
     expect(find.text('Skalibruj kompas: porusz telefonem ósemką'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 3));
@@ -112,7 +114,7 @@ void main() {
   testWidgets('too far: visible but shutter disabled', (tester) async {
     await pump(tester, spawnLat: 52.001); // ~111 m north
     gps.add(_pos(52.0, 21.0));
-    await face(tester, const Vec3(0, -40, -20));
+    await face(tester, 0);
     expect(find.byKey(const ValueKey('ar-sprite')), findsOneWidget);
     expect(find.textContaining('Podejdź bliżej'), findsOneWidget);
     expect(shutterEnabled(tester), isFalse);
@@ -129,8 +131,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     accel = StreamController();
-    mag = StreamController();
-    gyro = StreamController();
+    compass = StreamController();
     gps = StreamController();
     final router = GoRouter(initialLocation: '/map', routes: [
       GoRoute(
@@ -155,7 +156,9 @@ void main() {
     await tester.pumpWidget(ProviderScope(
       overrides: [
         arSensorStreamsProvider.overrideWithValue(
-            ArSensorStreams(accel: accel.stream, mag: mag.stream, gyro: gyro.stream)),
+            ArSensorStreams(accel: accel.stream)),
+        arCompassSourceProvider.overrideWithValue(compass.stream),
+        arCompassIsMagneticProvider.overrideWithValue(false),
         arPositionStreamProvider.overrideWithValue(() => gps.stream),
         catchRepositoryProvider.overrideWithValue(
             CatchRepository(ApiClient(baseUrl: 'http://test', client: never),
@@ -167,7 +170,7 @@ void main() {
     router.push('/catch/camera');
     await tester.pumpAndSettle();
     gps.add(_pos(52.0, 21.0));
-    await face(tester, const Vec3(0, -40, -20));
+    await face(tester, 0);
     expect(shutterEnabled(tester), isTrue);
 
     await tester.tap(find.byIcon(Icons.camera_alt));
@@ -190,7 +193,8 @@ void main() {
       overrides: [
         arCameraEnabledProvider.overrideWithValue(false),
         arSensorStreamsProvider.overrideWithValue(const ArSensorStreams(
-            accel: Stream.empty(), mag: Stream.empty(), gyro: Stream.empty())),
+            accel: Stream.empty())),
+        arCompassSourceProvider.overrideWithValue(const Stream.empty()),
         arPositionStreamProvider.overrideWithValue(() => const Stream.empty()),
       ],
       child: MaterialApp.router(routerConfig: router),
