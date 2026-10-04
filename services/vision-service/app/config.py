@@ -16,7 +16,7 @@ class Settings:
     topic_in: str = "photo.submitted"
     topic_out: str = "photo.analyzed"
     gemini_api_key: str = field(default_factory=lambda: os.getenv("GEMINI_API_KEY", "").strip())
-    gemini_model: str = field(default_factory=lambda: os.getenv("GEMINI_MODEL", "").strip() or "gemini-2.5-flash")
+    gemini_model: str = field(default_factory=lambda: os.getenv("GEMINI_MODEL", "").strip() or "gemini-3.7-flash")
     photos_dir: str = field(default_factory=lambda: os.getenv("PHOTOS_DIR", "/photos"))
     blur_threshold: float = field(default_factory=lambda: float(os.getenv("BLUR_THRESHOLD", "60")))
     dark_threshold: float = field(default_factory=lambda: float(os.getenv("DARK_THRESHOLD", "40")))

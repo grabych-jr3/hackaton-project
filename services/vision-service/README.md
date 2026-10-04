@@ -11,7 +11,7 @@ Preprocessing (`app/preprocess.py`):
 - perceptual hash → `phash` in the output (duplicate detection is central-api's job);
 - best-effort face blur (OpenCV Haar cascade).
 
-AI (`app/analyzer.py`): `google-genai`, model `GEMINI_MODEL` (default `gemini-2.5-flash`),
+AI (`app/analyzer.py`): `google-genai`, model `GEMINI_MODEL` (default `gemini-3.7-flash`),
 `response_schema` with ranges (`kerbRange`, `widthRange`). The model also returns `relevant` —
 if `false` the photo is `REJECTED`. The answer is validated with pydantic; on errors / invalid JSON
 it retries up to 2 times, then `FAILED` with `reason="AI niedostępne, użyj ankiety (...)"`.
