@@ -33,7 +33,7 @@ public class CatchService {
     static final long MAX_PHOTO_BYTES = 5L * 1024 * 1024;
     public static final String REASON_DUPLICATE = "To miejsce zostało już sfotografowane";
     static final int DAILY_LIMIT = 30;
-    static final double MAX_SPAWN_DISTANCE_M = 50;
+    static final double MAX_SPAWN_DISTANCE_M = 80; // tolerant to GPS noise
     static final Duration MAX_PHOTO_AGE = Duration.ofMinutes(10);
 
     private final JdbcTemplate jdbc;
@@ -80,7 +80,7 @@ public class CatchService {
                     FROM creature_spawn WHERE id = ?""", lng, lat, MAX_SPAWN_DISTANCE_M, spawnId);
             if (rows.isEmpty()) throw ApiException.notFound("Spawn " + spawnId + " not found");
             if (!Boolean.TRUE.equals(rows.get(0).get("alive"))) throw new ApiException(HttpStatus.GONE, "SPAWN_EXPIRED", "Spawn has expired");
-            if (!Boolean.TRUE.equals(rows.get(0).get("near"))) throw ApiException.badRequest("Too far from the spawn (max 50 m)");
+            if (!Boolean.TRUE.equals(rows.get(0).get("near"))) throw ApiException.badRequest("Too far from the spawn (max 80 m)");
         }
         Integer today = jdbc.queryForObject("SELECT count(*) FROM catch_record WHERE user_id = ? AND created_at > now() - interval '1 day'",
                 Integer.class, userId);
@@ -124,7 +124,7 @@ public class CatchService {
             return;
         }
         List<Map<String, Object>> rows = jdbc.queryForList("""
-                SELECT c.user_id, c.place_id, c.status, ST_X(c.geom) AS lng, ST_Y(c.geom) AS lat, s.rarity
+                SELECT c.user_id, c.place_id, c.status, ST_X(c.geom) AS lng, ST_Y(c.geom) AS lat, c.spawn_id, s.species AS spawn_species
                 FROM catch_record c LEFT JOIN creature_spawn s ON s.id = c.spawn_id
                 WHERE c.id = ? FOR UPDATE OF c""", catchId);
         if (rows.isEmpty()) {
@@ -162,10 +162,17 @@ public class CatchService {
             addAiFact(created, placeId, "ramp", result.get("ramp"), ref, now);
         }
 
-        // Same rules as POST /game/reports: severity -> rarity -> species. Catching never awards points.
+        // Catching a map spawn yields exactly that spawn's species; otherwise the survey rules
+        // (severity -> rarity -> species) apply. Catching never awards points.
         UUID userId = (UUID) c.get("user_id");
-        GameRules.Species species = game.rollSpecies(reportFromAi(placeId, result));
+        UUID spawnId = (UUID) c.get("spawn_id");
+        GameRules.Species species = Optional.ofNullable((String) c.get("spawn_species"))
+                .flatMap(game::species)
+                .orElseGet(() -> game.rollSpecies(reportFromAi(placeId, result)));
         game.addCreature(userId, species.id());
+        if (spawnId != null) {
+            jdbc.update("INSERT INTO spawn_catch (user_id, spawn_id) VALUES (?, ?) ON CONFLICT DO NOTHING", userId, spawnId);
+        }
 
         jdbc.update("""
                 UPDATE catch_record SET status = 'OK', ai_result = ?::jsonb, ai_confidence = ?, phash = ?, points = 0,

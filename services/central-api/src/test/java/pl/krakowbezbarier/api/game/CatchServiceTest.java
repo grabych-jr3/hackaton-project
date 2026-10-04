@@ -63,6 +63,27 @@ class CatchServiceTest {
     }
 
     @Test
+    void catchWithSpawnYieldsSpawnSpeciesAndMarksCaught() throws Exception {
+        UUID spawnId = UUID.randomUUID();
+        Map<String, Object> row = new HashMap<>();
+        row.put("user_id", user);
+        row.put("place_id", null);
+        row.put("status", "PENDING");
+        row.put("lng", 19.93);
+        row.put("lat", 50.06);
+        row.put("spawn_id", spawnId);
+        row.put("spawn_species", "smok");
+        when(jdbc.queryForList(contains("FOR UPDATE OF c"), any(Object[].class))).thenReturn(List.of(row));
+        when(jdbc.queryForList(contains("SELECT phash"), eq(String.class), any(Object[].class))).thenReturn(List.of());
+        when(game.species("smok")).thenReturn(Optional.of(new Species("smok", "Smok", "🐉", Rarity.legendary)));
+        svc.applyAnalysis(ok("ffff0000ffff0000"));
+        verify(game, never()).rollSpecies(any());
+        verify(game).addCreature(user, "smok");
+        verify(jdbc).update(contains("spawn_catch"), eq(user), eq(spawnId));
+        verify(jdbc).update(contains("status = 'OK'"), any(), any(), any(), eq("smok"), any(), eq(catchId));
+    }
+
+    @Test
     void severityMappedFromAiLikeReports() throws Exception {
         BarrierReport r = CatchService.reportFromAi("p1", ok("x").result());
         assertEquals(3, r.stepsOr0());
