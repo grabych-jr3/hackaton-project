@@ -53,6 +53,15 @@ app:
     startup-import: ${OVERPASS_STARTUP_IMPORT:true}
     cron: ${OVERPASS_CRON:0 0 4 * * *}
   admin-token: ${ADMIN_TOKEN:}
+  crowd:
+    recompute-ms: 300000
+    cell-m: ${CROWD_CELL_M:100} # honeycomb cell size (flat side to flat side), m
+    # prototype: busy Old Town / quiet outskirts on top of real data (set CROWD_DEMO=false to disable)
+    demo: ${CROWD_DEMO:true}
+  gtfs:
+    # ZTP Kraków open GTFS feeds (trams, buses); empty = skip transit in the crowd base
+    urls: ${GTFS_URLS:https://gtfs.ztp.krakow.pl/GTFS_KRK_T.zip,https://gtfs.ztp.krakow.pl/GTFS_KRK_A.zip}
+    cron: ${GTFS_CRON:0 30 4 * * MON}
 
 springdoc:
   swagger-ui:

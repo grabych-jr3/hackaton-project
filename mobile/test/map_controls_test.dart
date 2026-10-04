@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -9,6 +10,7 @@ import 'package:hackaton_project/app.dart';
 import 'package:hackaton_project/data/models/needs_profile.dart';
 import 'package:hackaton_project/data/models/place.dart';
 import 'package:hackaton_project/data/repositories/places_repository.dart';
+import 'package:hackaton_project/features/map/map_screen.dart';
 import 'package:hackaton_project/features/map/place_filters.dart';
 import 'package:hackaton_project/features/route/route_start.dart';
 import 'package:latlong2/latlong.dart';
@@ -122,5 +124,27 @@ void main() {
     await tester.tap(find.byTooltip('Pokaż mapę'));
     await tester.pumpAndSettle();
     expect(find.byTooltip('Lista miejsc'), findsOneWidget);
+  });
+
+  testWidgets('map camera cannot leave Kraków + 20 km', (tester) async {
+    SharedPreferences.setMockInitialValues(
+        {'needs_profile': jsonEncode(NeedsProfile.wheelchair.toJson())});
+    tester.view.physicalSize = const Size(412, 915);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [placesRepositoryProvider.overrideWithValue(_FileRepo())],
+      child: const KrakowBezBarierApp(),
+    ));
+    await tester.pumpAndSettle();
+    final map = tester.widget<FlutterMap>(find.byType(FlutterMap));
+    final ctrl = map.mapController!;
+    ctrl.move(const LatLng(52.23, 21.01), 12); // Warsaw
+    await tester.pump();
+    final c = ctrl.camera.center;
+    expect(krakowMapBounds.contains(c), isTrue);
+    expect(c.latitude, lessThanOrEqualTo(50.126 + 0.18 + 1e-6));
+    expect(c.longitude, lessThanOrEqualTo(20.217 + 0.28 + 1e-6));
+    expect(map.options.minZoom, 10);
   });
 }

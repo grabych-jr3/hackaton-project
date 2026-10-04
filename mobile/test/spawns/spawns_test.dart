@@ -16,6 +16,7 @@ import 'package:hackaton_project/features/spawns/spawn.dart';
 import 'package:hackaton_project/features/spawns/spawn_offset.dart';
 import 'package:hackaton_project/features/spawns/spawn_providers.dart';
 import 'package:hackaton_project/features/spawns/spawn_repository.dart';
+import 'package:hackaton_project/features/spawns/spawn_widgets.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:latlong2/latlong.dart';
@@ -155,8 +156,11 @@ void main() {
 
     await tester.tap(smok);
     await tester.pumpAndSettle();
-    expect(find.text('Złap aparatem'), findsOneWidget);
-    expect(find.text('Podejdź bliżej (≤ 80 m), aby złapać'), findsOneWidget);
+    // No GPS: catching is blocked straight away.
+    expect(find.text('Włącz lokalizację, aby złapać stworka'), findsOneWidget);
+    final far = tester.widget<ButtonStyleButton>(
+        find.ancestor(of: find.text('Za daleko'), matching: find.byWidgetPredicate((w) => w is ButtonStyleButton)));
+    expect(far.onPressed, isNull);
     semantics.dispose();
   });
 
@@ -195,7 +199,7 @@ void main() {
 
     final btn = find.byTooltip('Postaw stworka tutaj (test)');
     expect(tester.getSize(btn), const Size(52, 52));
-    final gps = tester.getRect(find.byTooltip('Moja lokalizacja'));
+    final gps = tester.getRect(find.byTooltip('Jak tłoczno?'));
     expect(tester.getRect(btn).top - gps.bottom, 12);
     expect(tester.getRect(btn).right, gps.right);
 
@@ -215,6 +219,33 @@ void main() {
     expect(spawns.map((s) => s.id), contains('u-1'));
   });
 
+  testWidgets('catch button is enabled only within the catch radius',
+      (tester) async {
+    await _pumpApp(tester, _FileSpawns());
+    final container = ProviderScope.containerOf(
+        tester.element(find.byType(KrakowBezBarierApp)));
+    final target = (await container.read(spawnsProvider.future)).first;
+
+    Future<ButtonStyleButton> sheetButton(double meters) async {
+      await tester.pumpWidget(MaterialApp(
+          home: Scaffold(
+              body: SpawnSheet(
+                  distance: SpawnDistance(target, meters, fromGps: true),
+                  onCatch: () {}))));
+      return tester.widget<ButtonStyleButton>(
+          find.byWidgetPredicate((w) => w is ButtonStyleButton));
+    }
+
+    // Other part of the city (3 km away): blocked with "Podejdź bliżej".
+    expect((await sheetButton(3000)).onPressed, isNull);
+    expect(find.text('Podejdź bliżej (≤ 80 m), aby złapać'), findsOneWidget);
+    expect(find.text('Za daleko'), findsOneWidget);
+
+    // Next to it: allowed.
+    expect((await sheetButton(20)).onPressed, isNotNull);
+    expect(find.text('Złap aparatem'), findsOneWidget);
+  });
+
   testWidgets('list mode has a "Stworki w pobliżu" section sorted by distance',
       (tester) async {
     await _pumpApp(tester, _FileSpawns());
@@ -223,7 +254,7 @@ void main() {
     await tester.tap(find.byTooltip('Lista miejsc'));
     await tester.pumpAndSettle();
     expect(find.text('Stworki w pobliżu'), findsOneWidget);
-    expect(find.text('Złap'), findsWidgets);
+    expect(find.text('Za daleko'), findsWidgets); // no GPS in tests -> blocked
     final nearby = container.read(nearbySpawnsProvider);
     for (var i = 1; i < nearby.length; i++) {
       expect(nearby[i].meters, greaterThanOrEqualTo(nearby[i - 1].meters));

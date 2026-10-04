@@ -13,6 +13,10 @@ import 'package:latlong2/latlong.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/offline_banner.dart';
 import '../../data/models/accessibility_fact.dart';
+import '../../data/models/crowd.dart';
+import '../../data/repositories/crowd_repository.dart';
+import 'crowd_cloud_layer.dart';
+import '../game/game_providers.dart';
 import '../../data/models/place.dart';
 import '../place/place_labels.dart';
 import '../place/place_providers.dart';
@@ -47,12 +51,141 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   StreamSubscription<Position>? _posSub;
   bool _spawning = false;
   Timer? _bboxDebounce;
+  List<CrowdCell> _crowd = const [];
+  Timer? _crowdDebounce;
+  Timer? _crowdRefresh;
+  bool _reporting = false;
+  bool _showCrowdGrid = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _crowdRefresh = Timer.periodic(
+        const Duration(minutes: 5), (_) => _loadCrowd());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadCrowd());
+  }
 
   @override
   void dispose() {
     _posSub?.cancel();
     _bboxDebounce?.cancel();
+    _crowdDebounce?.cancel();
+    _crowdRefresh?.cancel();
     super.dispose();
+  }
+
+  /// Fetches crowd cells for the visible area (the layer is always shown).
+  Future<void> _loadCrowd() async {
+    final repo = ref.read(crowdRepositoryProvider);
+    if (repo == null || !mounted) return;
+    final LatLngBounds b;
+    try {
+      b = _mapController.camera.visibleBounds;
+    } catch (_) {
+      return; // map not rendered yet
+    }
+    try {
+      final cells = await repo.getCells(
+          minLat: b.south, minLng: b.west, maxLat: b.north, maxLng: b.east);
+      if (mounted) setState(() => _crowd = cells);
+    } catch (_) {
+      // Keep the previous layer on network/API errors.
+    }
+  }
+
+  void _onMapMoved() {
+    _crowdDebounce?.cancel();
+    _crowdDebounce = Timer(const Duration(milliseconds: 600), _loadCrowd);
+  }
+
+  /// "Jak tłoczno?" — rates the crowd at the user's location.
+  Future<void> _askCrowd() async {
+    final repo = ref.read(crowdRepositoryProvider);
+    final messenger = ScaffoldMessenger.of(context);
+    void say(String msg) => messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(msg)));
+    if (repo == null) {
+      return say('Ocena tłoku wymaga połączenia z serwerem.');
+    }
+    final level = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: AppColors.surfaceElevated,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text('Jak tłoczno tutaj?',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w700)),
+                  ),
+                  // Shows/hides the crowd grid on the map.
+                  StatefulBuilder(
+                    builder: (context, setSheet) => Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('Siatka', style: TextStyle(fontSize: 13)),
+                        Switch(
+                          value: _showCrowdGrid,
+                          onChanged: (v) {
+                            setSheet(() {});
+                            setState(() => _showCrowdGrid = v);
+                            if (v) _loadCrowd();
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            for (final (i, label, color) in const [
+              (0, 'Luźno', Color(0xFF2E7D32)),
+              (1, 'Średnio', Color(0xFFFFA000)),
+              (2, 'Tłoczno', Color(0xFFD32F2F)),
+            ])
+              ListTile(
+                leading: Icon(Icons.circle, color: color),
+                title: Text(label),
+                onTap: () => Navigator.of(context).pop(i),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (level == null || !mounted) return;
+    var loc = ref.read(userLocationProvider);
+    if (loc == null) {
+      await _locate();
+      if (!mounted) return;
+      loc = ref.read(userLocationProvider);
+    }
+    // Outside Kraków (e.g. testing from home): rate the place in the middle of the map instead.
+    final point = loc == null || loc.isFarFromKrakow
+        ? _mapController.camera.center
+        : loc.point;
+    setState(() => _reporting = true);
+    try {
+      final res = await repo.report(point, level);
+      if (!mounted) return;
+      if (res.awarded > 0) ref.invalidate(gameProvider);
+      say(res.awarded > 0
+          ? 'Dzięki za ocenę! +${res.awarded} pkt'
+          : 'Dzięki za ocenę!');
+      _loadCrowd();
+    } on CrowdReportException catch (e) {
+      say(e.message);
+    } catch (_) {
+      say('Nie udało się wysłać oceny. Spróbuj ponownie.');
+    } finally {
+      if (mounted) setState(() => _reporting = false);
+    }
   }
 
   /// High-accuracy settings per platform (desktop browsers may still
@@ -179,6 +312,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   /// Debounced: the visible area drives which spawns are fetched.
   void _onCameraChanged(MapCamera camera) {
+    _onMapMoved();
     _bboxDebounce?.cancel();
     _bboxDebounce = Timer(const Duration(milliseconds: 600), () {
       if (!mounted) return;
@@ -236,6 +370,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   Widget build(BuildContext context) {
     final route = ref.watch(routeProvider);
     final hasManualStart = ref.watch(manualStartProvider) != null;
+    ref.listen(placeFiltersProvider.select((f) => f.avoidCrowds), (_, on) {
+      ref.read(routeProvider.notifier).replan();
+    });
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -276,6 +413,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     onLongPressMap: _setManualStart,
                     onCameraChanged: _onCameraChanged,
                     onSpawnTap: (d) => showSpawnSheet(context, d),
+                    crowd: _showCrowdGrid ? _crowd : const [],
                   ),
                 ),
 
@@ -335,6 +473,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         icon: Icons.my_location_rounded,
                         isLoading: _locating,
                         onPressed: _locating ? null : _locate,
+                      ),
+                      const SizedBox(height: 12),
+                      _GlassMapButton(
+                        tooltip: 'Jak tłoczno?',
+                        icon: Icons.groups_rounded,
+                        isLoading: _reporting,
+                        onPressed: _reporting ? null : _askCrowd,
                       ),
                       const SizedBox(height: 12),
                       _GlassMapButton(
@@ -696,6 +841,8 @@ class _FloatingSearchIslandState extends ConsumerState<_FloatingSearchIsland> {
                         (f, v) => f.copyWith(toilet: v)),
                     chip('Ławki', Icons.chair_rounded, filters.benches,
                         (f, v) => f.copyWith(benches: v)),
+                    chip('Unikaj tłumów', Icons.groups_rounded, filters.avoidCrowds,
+                        (f, v) => f.copyWith(avoidCrowds: v)),
                   ],
                 ),
               ),
@@ -835,6 +982,12 @@ class _GlassMapButton extends StatelessWidget {
   }
 }
 
+/// Kraków city bbox (SW 49.967,19.792 / NE 50.126,20.217) expanded by ~20 km.
+final krakowMapBounds = LatLngBounds(
+  const LatLng(49.967 - 0.18, 19.792 - 0.28),
+  const LatLng(50.126 + 0.18, 20.217 + 0.28),
+);
+
 class _PlacesMap extends ConsumerWidget {
   const _PlacesMap({
     required this.controller,
@@ -845,10 +998,12 @@ class _PlacesMap extends ConsumerWidget {
     required this.onLongPressMap,
     this.onCameraChanged,
     this.onSpawnTap,
+    this.crowd = const [],
   });
 
   final ValueChanged<MapCamera>? onCameraChanged;
   final ValueChanged<SpawnDistance>? onSpawnTap;
+  final List<CrowdCell> crowd;
   final MapController controller;
   final _MapStyle style;
   final Place? selected;
@@ -868,8 +1023,10 @@ class _PlacesMap extends ConsumerWidget {
       options: MapOptions(
         initialCenter: _krakowCenter,
         initialZoom: 14.5,
-        minZoom: 11,
+        minZoom: 10,
         maxZoom: 19,
+        // Panning limited to ~20 km beyond Kraków's boundary.
+        cameraConstraint: CameraConstraint.containCenter(bounds: krakowMapBounds),
         onTap: (_, _) => onTapMap(),
         onLongPress: (_, point) => onLongPressMap(point),
         onPositionChanged: onCameraChanged == null
@@ -894,6 +1051,9 @@ class _PlacesMap extends ConsumerWidget {
             userAgentPackageName: 'pl.krakowbezbarier.app',
             tileProvider: kIsWeb ? _PlainWebTileProvider() : NetworkTileProvider(),
           ),
+
+        // Crowd layer: soft cloud over the 100 m honeycomb, no borders.
+        if (crowd.isNotEmpty) CrowdCloudLayer(cells: crowd),
 
         // 2. Planned accessible route (ORS or labelled demo)
         //    walking line, barrier spans in red, or accessible alternative
@@ -1351,3 +1511,4 @@ enum _MapStyle {
   final bool retina;
   final int maxNativeZoom;
 }
+
