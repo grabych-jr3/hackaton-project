@@ -25,7 +25,7 @@ import java.util.zip.ZipFile;
 
 /**
  * Open data from ZTP Kraków (GTFS feeds, trams + buses): departures per stop and hour of day, summed per grid cell
- * and stored as {@code grid_cell.transit_profile} (24 values 0..1, relative to the busiest cell-hour).
+ * and stored as {@code crowd_cell.transit_profile} (24 values 0..1, relative to the busiest cell-hour).
  * All service days are counted together: only the shape over the day matters.
  */
 @Component
@@ -52,7 +52,7 @@ public class GtfsTransitImporter {
     @EventListener(ApplicationReadyEvent.class)
     public void initial() {
         if (urls.isEmpty()) return;
-        Integer n = jdbc.queryForObject("SELECT count(*) FROM grid_cell WHERE transit_profile IS NOT NULL", Integer.class);
+        Integer n = jdbc.queryForObject("SELECT count(*) FROM crowd_cell WHERE transit_profile IS NOT NULL", Integer.class);
         if (n != null && n > 0) return;
         Thread t = new Thread(this::runSafe, "gtfs-import");
         t.setDaemon(true);
@@ -92,7 +92,7 @@ public class GtfsTransitImporter {
         Map<String, double[]> profiles = normalise(perCell);
         List<Object[]> rows = new ArrayList<>();
         profiles.forEach((cell, p) -> rows.add(new Object[]{toJson(p), cell}));
-        jdbc.batchUpdate("UPDATE grid_cell SET transit_profile = ?::jsonb WHERE id = ?", rows);
+        jdbc.batchUpdate("UPDATE crowd_cell SET transit_profile = ?::jsonb WHERE id = ?", rows);
         log.info("GTFS: transit profile for {} cells", rows.size());
         crowd.recompute();
     }

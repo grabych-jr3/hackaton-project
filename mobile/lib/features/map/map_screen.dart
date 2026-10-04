@@ -15,6 +15,7 @@ import '../../core/widgets/offline_banner.dart';
 import '../../data/models/accessibility_fact.dart';
 import '../../data/models/crowd.dart';
 import '../../data/repositories/crowd_repository.dart';
+import 'crowd_cloud_layer.dart';
 import '../game/game_providers.dart';
 import '../../data/models/place.dart';
 import '../place/place_labels.dart';
@@ -1010,17 +1011,8 @@ class _PlacesMap extends ConsumerWidget {
             tileProvider: kIsWeb ? _PlainWebTileProvider() : NetworkTileProvider(),
           ),
 
-        // Crowd layer ('Unikaj tłumów'): semi-transparent squares.
-        if (crowd.isNotEmpty)
-          PolygonLayer(polygons: [
-            for (final c in crowd)
-              Polygon(
-                points: c.polygon,
-                color: crowdColor(c.label).withValues(alpha: 0.3),
-                borderColor: crowdColor(c.label).withValues(alpha: 0.5),
-                borderStrokeWidth: 0.5,
-              ),
-          ]),
+        // Crowd layer: soft cloud over the 100 m honeycomb, no borders.
+        if (crowd.isNotEmpty) CrowdCloudLayer(cells: crowd),
 
         // 2. Planned accessible route (ORS or labelled demo)
         //    walking line, barrier spans in red, or accessible alternative
@@ -1479,9 +1471,3 @@ enum _MapStyle {
   final int maxNativeZoom;
 }
 
-/// Green / amber / red by crowd label.
-Color crowdColor(CrowdLabel label) => switch (label) {
-      CrowdLabel.low => const Color(0xFF2E7D32),
-      CrowdLabel.medium => const Color(0xFFFFA000),
-      CrowdLabel.high => const Color(0xFFD32F2F),
-    };

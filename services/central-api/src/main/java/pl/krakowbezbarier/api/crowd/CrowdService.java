@@ -34,6 +34,7 @@ public class CrowdService {
     private final ObjectMapper om;
     private final PointsService points;
     private final boolean demo;
+    private final int cellM;
 
     /** One city's grid and its static inputs (places, transit), reloaded on every recompute. */
     record City(CrowdGrid grid, ZoneId zone, Map<String, List<Place>> places, Map<String, double[]> transit, double peak) {}
@@ -43,12 +44,14 @@ public class CrowdService {
     private volatile List<City> cities = List.of();
     private volatile Map<String, CellCrowd> latest = Map.of();
 
-    public CrowdService(JdbcTemplate jdbc, ObjectMapper om, PointsService points) { this(jdbc, om, points, false); }
+    public CrowdService(JdbcTemplate jdbc, ObjectMapper om, PointsService points) { this(jdbc, om, points, false, 100); }
 
     @org.springframework.beans.factory.annotation.Autowired
     public CrowdService(JdbcTemplate jdbc, ObjectMapper om, PointsService points,
-                        @org.springframework.beans.factory.annotation.Value("${app.crowd.demo:false}") boolean demo) {
+                        @org.springframework.beans.factory.annotation.Value("${app.crowd.demo:false}") boolean demo,
+                        @org.springframework.beans.factory.annotation.Value("${app.crowd.cell-m:100}") int cellM) {
         this.demo = demo;
+        this.cellM = cellM;
         this.jdbc = jdbc;
         this.om = om;
         this.points = points;
@@ -70,13 +73,14 @@ public class CrowdService {
         for (CrowdGrid g : loadGrids()) {
             List<Object[]> rows = new ArrayList<>();
             for (int[] c : g.allCells()) {
-                double w = g.bbox().minLng() + c[0] * g.stepLng(), s = g.bbox().minLat() + c[1] * g.stepLat();
-                rows.add(new Object[]{g.id(c[0], c[1]), g.cityId(), w, s, w + g.stepLng(), s + g.stepLat()});
+                StringJoiner wkt = new StringJoiner(",", "POLYGON((", "))");
+                for (double[] p : g.polygon(c[0], c[1])) wkt.add(p[1] + " " + p[0]);
+                rows.add(new Object[]{g.id(c[0], c[1]), g.cityId(), wkt.toString()});
             }
             jdbc.batchUpdate("""
-                    INSERT INTO grid_cell (id, city_id, geom) VALUES (?, ?, ST_MakeEnvelope(?, ?, ?, ?, 4326))
+                    INSERT INTO crowd_cell (id, city_id, geom) VALUES (?, ?, ST_GeomFromText(?, 4326))
                     ON CONFLICT (id) DO NOTHING""", rows);
-            log.info("Crowd grid {}: {}x{} cells", g.cityId(), g.cols(), g.rows());
+            log.info("Crowd grid {}: {} hex cells of {} m", g.cityId(), g.allCells().size(), (int) g.sizeM());
         }
     }
 
@@ -108,9 +112,9 @@ public class CrowdService {
 
     List<CrowdGrid> loadGrids() {
         return jdbc.query("""
-                SELECT id, grid_size_m, ST_XMin(bbox) a, ST_YMin(bbox) b, ST_XMax(bbox) c, ST_YMax(bbox) d
+                SELECT id, ST_XMin(bbox) a, ST_YMin(bbox) b, ST_XMax(bbox) c, ST_YMax(bbox) d
                 FROM city WHERE bbox IS NOT NULL""", (rs, i) -> CrowdGrid.of(rs.getString("id"),
-                new BBox(rs.getDouble("a"), rs.getDouble("b"), rs.getDouble("c"), rs.getDouble("d")), rs.getInt("grid_size_m")));
+                new BBox(rs.getDouble("a"), rs.getDouble("b"), rs.getDouble("c"), rs.getDouble("d")), cellM));
     }
 
     @Scheduled(fixedRateString = "${app.crowd.recompute-ms:300000}", initialDelayString = "${app.crowd.recompute-ms:300000}")
@@ -154,9 +158,8 @@ public class CrowdService {
         double real = CrowdModel.normalise(
                 CrowdModel.rawBase(c.places().getOrDefault(id, List.of()), c.transit().get(id), local), c.peak());
         if (!demo) return real;
-        List<double[]> poly = c.grid().polygon(x, y);
-        double lat = (poly.get(0)[0] + poly.get(2)[0]) / 2, lng = (poly.get(0)[1] + poly.get(2)[1]) / 2;
-        return Math.max(real, CrowdModel.demoBase(id, lat, lng, local));
+        double[] ctr = c.grid().center(x, y);
+        return Math.max(real, CrowdModel.demoBase(id, ctr[0], ctr[1], local));
     }
 
     List<City> loadCities() {
@@ -164,7 +167,7 @@ public class CrowdService {
         jdbc.query("SELECT id, timezone FROM city", rs -> { zones.put(rs.getString(1), ZoneId.of(rs.getString(2))); });
         List<CrowdGrid> grids = loadGrids();
         Map<String, double[]> transit = new HashMap<>();
-        jdbc.query("SELECT id, transit_profile::text t FROM grid_cell WHERE transit_profile IS NOT NULL", rs -> {
+        jdbc.query("SELECT id, transit_profile::text t FROM crowd_cell WHERE transit_profile IS NOT NULL", rs -> {
             double[] p = parseProfile(rs.getString("t"));
             if (p != null) transit.put(rs.getString("id"), p);
         });
@@ -310,9 +313,8 @@ public class CrowdService {
         return new ReportResult(cell, latest.get(cell), awarded ? REPORT_POINTS : 0);
     }
 
-    private static boolean intersects(CrowdGrid g, int x, int y, BBox b) {
-        double w = g.bbox().minLng() + x * g.stepLng(), s = g.bbox().minLat() + y * g.stepLat();
-        return w <= b.maxLng() && w + g.stepLng() >= b.minLng() && s <= b.maxLat() && s + g.stepLat() >= b.minLat();
+    private static boolean intersects(CrowdGrid g, int q, int r, BBox b) {
+        return g.intersects(q, r, b);
     }
 
     private double[] parseProfile(String json) {

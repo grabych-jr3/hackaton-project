@@ -111,18 +111,32 @@ class CrowdModelTest {
     }
 
     @Test
-    void gridMapsPointsToStableCells() {
-        CrowdGrid g = CrowdGrid.of("krakow", new BBox(19.90, 50.04, 19.98, 50.08), 250);
-        assertTrue(g.cols() > 20 && g.rows() > 15);
-        assertEquals("krakow:0:0", g.cellAt(50.0401, 19.9001));
+    void hexGridMapsPointsToStableCells() {
+        CrowdGrid g = CrowdGrid.of("krakow", new BBox(19.90, 50.04, 19.98, 50.08), 100);
+        // ~5.7 x 4.5 km of 100 m hexes (8660 m2 each) -> roughly 3000 cells
+        assertTrue(g.allCells().size() > 2500 && g.allCells().size() < 4000, "cells " + g.allCells().size());
+        assertNotNull(g.cellAt(50.0401, 19.9001));
+        assertNotNull(g.cellAt(50.0799, 19.9799));
         assertNull(g.cellAt(50.0, 19.93));
+
         String rynek = g.cellAt(50.0617, 19.9373);
-        int[] xy = CrowdGrid.xy(rynek);
-        List<double[]> poly = g.polygon(xy[0], xy[1]);
-        assertEquals(5, poly.size());
-        assertTrue(poly.get(0)[0] <= 50.0617 && poly.get(2)[0] >= 50.0617);
-        assertTrue(poly.get(0)[1] <= 19.9373 && poly.get(2)[1] >= 19.9373);
-        assertEquals(g.cols() * g.rows(), g.allCells().size());
+        int[] qr = CrowdGrid.xy(rynek);
+        double[] c = g.center(qr[0], qr[1]);
+        // the point is within the circumradius of its cell's centre
+        assertTrue(pl.krakowbezbarier.api.common.GeoUtils.haversineM(c[0], c[1], 50.0617, 19.9373) <= g.radiusM() + 0.5);
+        // the centre maps back to the same cell, and neighbours are ~100 m apart
+        assertEquals(rynek, g.cellAt(c[0], c[1]));
+        double[] n = g.center(qr[0] + 1, qr[1]);
+        assertEquals(100, pl.krakowbezbarier.api.common.GeoUtils.haversineM(c[0], c[1], n[0], n[1]), 1);
+
+        List<double[]> poly = g.polygon(qr[0], qr[1]);
+        assertEquals(7, poly.size());
+        assertArrayEquals(poly.get(0), poly.get(6));
+        for (int i = 0; i < 6; i++) {
+            assertEquals(g.radiusM(), pl.krakowbezbarier.api.common.GeoUtils.haversineM(c[0], c[1], poly.get(i)[0], poly.get(i)[1]), 0.5);
+        }
+        assertTrue(g.intersects(qr[0], qr[1], new BBox(19.937, 50.0615, 19.938, 50.062)));
+        assertFalse(g.intersects(qr[0], qr[1], new BBox(19.95, 50.07, 19.96, 50.075)));
     }
 
     @Test

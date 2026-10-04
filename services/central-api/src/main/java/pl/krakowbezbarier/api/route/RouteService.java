@@ -47,7 +47,7 @@ public class RouteService {
 
     /** avoidCrowds: cells at or above this crowd are sent to ORS as avoid_polygons (at most AVOID_MAX). */
     static final double AVOID_THRESHOLD = 0.67;
-    static final int AVOID_MAX = 15;
+    static final int AVOID_MAX = 60;
 
     private final OrsClient ors;
     private final CrowdService crowd;

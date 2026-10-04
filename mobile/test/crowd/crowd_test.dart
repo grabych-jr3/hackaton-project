@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:hackaton_project/features/map/crowd_cloud_layer.dart';
 import 'package:hackaton_project/data/api/api_client.dart';
 import 'package:hackaton_project/data/models/crowd.dart';
 import 'package:hackaton_project/data/models/needs_profile.dart';
@@ -154,5 +155,16 @@ void main() {
         avoidCrowds: true);
     expect(sent!['avoidCrowds'], true);
     expect(r.note, 'Omija zatłoczony Rynek');
+  });
+
+  test('crowd cloud: quiet is nearly invisible, busy is stronger and redder',
+      () {
+    expect(crowdCloudAlpha(0), lessThan(0.07));
+    expect(crowdCloudAlpha(1), closeTo(0.53312, 1e-9));
+    expect(crowdCloudAlpha(1), greaterThan(crowdCloudAlpha(0.5)));
+    expect(crowdCloudAlpha(1), lessThanOrEqualTo(0.55)); // never solid
+    final busy = crowdCloudColor(1), calm = crowdCloudColor(0);
+    expect(busy.r, greaterThan(calm.r));
+    expect(calm.g, greaterThan(busy.g));
   });
 }
