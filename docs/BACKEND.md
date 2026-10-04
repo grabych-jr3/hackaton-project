@@ -428,11 +428,21 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
 Квадраты, где меньше 3 пользователей, не раскрывают `live` (приватность).
 
 ### 5.6 Игра: спавн и улов (P1)
-`GET /spawns?bbox=…`
+`GET /api/v1/spawns?bbox=minLng,minLat,maxLng,maxLat` (публичный; `bbox` необязателен → все активные; с токеном заполняется `caughtByMe`) → голый массив:
 ```json
-{ "spawns": [ { "id": "…", "lat": 50.06, "lng": 19.94, "species": "smok",
-                "rarity": "epic", "expiresAt": "…" } ] }
+[ { "id": "…", "lat": 50.0532, "lng": 19.934, "speciesId": "smok", "name": "Smok", "emoji": "🐉",
+    "rarity": "legendary", "expiresAt": "2026-11-03T12:00:00Z", "kind": "seed", "caughtByMe": false } ]
 ```
+- `kind`: `seed` (демо-спавны), `user` (созданы через `/spawns/here`), `auto` (резерв). Возвращаются только `expiresAt > now`.
+- `name`/`emoji`/`rarity` берутся из каталога `game/game.json`. Неверный `bbox` → `400`.
+
+**Демо-спавны (`kind = 'seed'`)** — `SpawnService.SEEDS` (14 шт. вокруг центра: Rynek, Sukiennice, Mariacka, Collegium Maius, Planty, Barbakan, Wawel (Smok, единственный legendary), Bulwary, Kazimierz, Kładka Bernatka, Podgórze, Muzeum Narodowe, Massolit, Schindler). `@Scheduled` при старте и каждые 10 мин делает upsert по `seed_key`: создаёт недостающие и продлевает `expires_at = now + 30 дней` — демо никогда не пустеет.
+
+`POST /api/v1/spawns/here` (auth) `{ "lat": 50.06, "lng": 19.93, "speciesId": "sowa" }` → `201` + объект спавна (как выше). Спавн ровно в точке, `kind = 'user'`, живёт 2 ч; без `speciesId` — случайный common/rare; неизвестный `speciesId` → `400`. Не более 3 активных user-спавнов на пользователя: самый старый истекает (`expires_at = now`). Нужен для теста AR-камеры на месте.
+
+**Поимка спавна:** если у catch есть `spawnId` и анализ `OK` — пользователь получает **вид этого спавна** (не бросок по severity), спавн помечается пойманным (`spawn_catch(user_id, spawn_id)` → `caughtByMe: true`). Спавн не исчезает — его могут поймать и другие. Без `spawnId` — прежнее поведение.
+
+Таблицы (V4): `creature_spawn` + `kind`, `seed_key` (unique), `created_by`, `created_at`; `spawn_catch(user_id, spawn_id, caught_at)`.
 
 `POST /catches` (auth) — `multipart/form-data`:
 | часть | тип | обязательна |
@@ -440,13 +450,13 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
 | photo | JPEG или PNG (проверка по сигнатуре), ≤ 5 МБ (клиент сжимает до ~1280 px) | да |
 | lat, lng | double | да |
 | takenAt | ISO-8601 UTC | да |
-| spawnId | uuid | нет (спавны ещё не генерируются) |
+| spawnId | uuid | нет (из `GET /spawns`) |
 | placeId | string | нет |
 
 Проверки до отправки в Kafka:
 - `takenAt` не старше 10 мин (и не более 2 мин в будущем) → `400`;
 - размер > 5 МБ → `413 PAYLOAD_TOO_LARGE`; не JPEG/PNG → `400`;
-- если передан `spawnId`: существует (`404`), не истёк (`410 SPAWN_EXPIRED`), расстояние ≤ 50 м (`400`); без `spawnId` проверки расстояния нет;
+- если передан `spawnId`: существует (`404`), не истёк (`410 SPAWN_EXPIRED`), расстояние ≤ 80 м (`400`, допуск на шум GPS); без `spawnId` проверки расстояния нет;
 - `placeId` (если есть) существует → иначе `404`;
 - лимит 30 фото в сутки на пользователя → `429`.
 
