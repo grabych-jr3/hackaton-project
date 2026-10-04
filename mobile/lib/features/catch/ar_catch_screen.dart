@@ -1,17 +1,21 @@
 import 'dart:async';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, visibleForTesting;
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../data/repositories/catch_repository.dart';
 import '../game/game_models.dart';
+import 'ar_math.dart';
+import 'ar_sensors.dart';
 import 'pending_catches.dart';
 
 /// Shown right after the shutter.
@@ -32,8 +36,17 @@ enum CatchExit {
 /// → poll the vision result. Falls back to the survey when the camera, the
 /// location or the AI is unavailable — the analysis is never faked.
 class ArCatchScreen extends ConsumerStatefulWidget {
-  const ArCatchScreen(
-      {super.key, this.placeId, this.spawnId, this.speciesEmoji, this.speciesName});
+  const ArCatchScreen({
+    super.key,
+    this.placeId,
+    this.spawnId,
+    this.speciesEmoji,
+    this.speciesName,
+    this.spawnLat,
+    this.spawnLng,
+    @visibleForTesting this.cameraEnabled = true,
+    @visibleForTesting this.takePictureOverride,
+  });
 
   final String? placeId;
 
@@ -41,6 +54,18 @@ class ArCatchScreen extends ConsumerStatefulWidget {
   final String? spawnId;
   final String? speciesEmoji;
   final String? speciesName;
+
+  /// Geographic anchor of the creature; both set = geo-anchored AR mode.
+  final double? spawnLat;
+  final double? spawnLng;
+
+  /// Tests disable the camera plugin (overlay rendered on black).
+  final bool cameraEnabled;
+
+  /// Tests replace the camera shutter.
+  final Future<Uint8List> Function()? takePictureOverride;
+
+  bool get geoMode => spawnLat != null && spawnLng != null;
 
   @override
   ConsumerState<ArCatchScreen> createState() => _ArCatchScreenState();
@@ -61,6 +86,19 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
   bool _gpsFailed = false;
 
   bool _capturing = false;
+
+  // --- geo-anchored mode ---
+  final _fusion = HeadingFusion();
+  final List<StreamSubscription<dynamic>> _geoSubs = [];
+  double? _accuracy;
+  double? _distance;
+  double? _bearing;
+  bool _showDebug = false;
+  String? _liveHint;
+  DateTime _liveHintAt = DateTime.fromMillisecondsSinceEpoch(0);
+  Timer? _liveHintTimer;
+  static const _fovDeg = defaultHorizontalFovDeg; // camera plugin exposes no FOV
+
   late final String _spriteEmoji;
   late final AnimationController _bob;
 
@@ -70,7 +108,17 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
 
   /// Without an accelerometer (web, desktop) the tilt hint is skipped.
   bool get _pitchOk => !_hasSensor || (_pitch >= _minPitch && _pitch <= _maxPitch);
-  bool get _canCapture => _pitchOk && _lat != null && !_capturing;
+  bool get _cameraOn => widget.cameraEnabled && ref.read(arCameraEnabledProvider);
+
+  bool get _geoReady =>
+      _fusion.heading != null && _distance != null && _bearing != null;
+  double? get _rel =>
+      _geoReady ? relativeBearing(_bearing!, _fusion.heading!) : null;
+  bool get _geoCatchOk =>
+      _geoReady && canCatchAt(relDeg: _rel!, distanceM: _distance!);
+  bool get _canCapture => (widget.geoMode ? _geoCatchOk : _pitchOk) &&
+      _lat != null &&
+      !_capturing;
 
   @override
   void initState() {
@@ -79,9 +127,17 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     const emojis = ['🐉', '🦉', '🦊', '🐺', '🦎', '🐸', '🦋', '🐾'];
     _spriteEmoji = widget.speciesEmoji ?? emojis[Random().nextInt(emojis.length)];
     _bob = AnimationController(vsync: this, duration: const Duration(milliseconds: 1800));
-    _initCamera();
-    _listenSensors();
-    _fetchLocation();
+    if (_cameraOn) {
+      _initCamera();
+    } else {
+      _initializing = false;
+    }
+    if (widget.geoMode) {
+      _listenGeo();
+    } else {
+      _listenSensors();
+      _fetchLocation();
+    }
   }
 
   @override
@@ -152,6 +208,72 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     }
   }
 
+  void _listenGeo() {
+    final sensors = ref.read(arSensorStreamsProvider);
+    void sub<T>(Stream<T> s, void Function(T) on) {
+      try {
+        _geoSubs.add(s.listen((e) {
+          if (!mounted) return;
+          setState(() => on(e));
+          _updateLiveHint();
+        }, onError: (Object _) {}, cancelOnError: true));
+      } catch (_) {
+        // Sensor missing on this platform.
+      }
+    }
+
+    sub<Vec3>(sensors.accel, (e) {
+      _hasSensor = true;
+      _fusion.onAccel(e);
+    });
+    sub<Vec3>(sensors.mag, _fusion.onMag);
+    sub<Vec3>(sensors.gyro, _fusion.onGyro);
+    try {
+      _geoSubs.add(ref.read(arPositionStreamProvider)().listen((pos) {
+        if (!mounted) return;
+        setState(() {
+          _lat = pos.latitude;
+          _lng = pos.longitude;
+          _accuracy = pos.accuracy;
+          _gpsFailed = false;
+          _distance = Geolocator.distanceBetween(
+              pos.latitude, pos.longitude, widget.spawnLat!, widget.spawnLng!);
+          _bearing = wrap360(Geolocator.bearingBetween(
+              pos.latitude, pos.longitude, widget.spawnLat!, widget.spawnLng!));
+        });
+        _updateLiveHint();
+      }, onError: (Object _) {
+        if (mounted && _lat == null) setState(() => _gpsFailed = true);
+      }));
+    } catch (_) {
+      _gpsFailed = true;
+    }
+  }
+
+  String? get _geoHint {
+    if (!_geoReady) return null;
+    return arHint(relDeg: _rel!, distanceM: _distance!, fovDeg: _fovDeg);
+  }
+
+  /// Screen-reader live region text, throttled to one change per 2 s.
+  void _updateLiveHint() {
+    final next = _geoHint;
+    if (next == _liveHint) return;
+    final since = DateTime.now().difference(_liveHintAt);
+    const gap = Duration(seconds: 2);
+    if (since >= gap) {
+      _liveHintTimer?.cancel();
+      _liveHintTimer = null;
+      _liveHintAt = DateTime.now();
+      setState(() => _liveHint = next);
+    } else {
+      _liveHintTimer ??= Timer(gap - since, () {
+        _liveHintTimer = null;
+        if (mounted) _updateLiveHint();
+      });
+    }
+  }
+
   Future<void> _fetchLocation() async {
     try {
       if (!kIsWeb && !await Geolocator.isLocationServiceEnabled()) {
@@ -184,18 +306,22 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
   Future<void> _capture() async {
     final cam = _cam;
     final repo = ref.read(catchRepositoryProvider);
-    if (!_canCapture || cam == null || !cam.value.isInitialized) return;
+    final shoot = widget.takePictureOverride;
+    if (!_canCapture) return;
+    if (shoot == null && (cam == null || !cam.value.isInitialized)) return;
     if (repo == null) {
       Navigator.of(context).pop(CatchExit.survey);
       return;
     }
     setState(() => _capturing = true);
-    final messenger = ScaffoldMessenger.of(context);
+    // Global messenger: the snackbar survives the jump back to the map.
+    final messenger = catchMessengerKey.currentState ?? ScaffoldMessenger.of(context);
     final view = View.of(context);
     final dir = Directionality.of(context);
     try {
-      final file = await cam.takePicture();
-      final bytes = await file.readAsBytes();
+      final bytes = shoot != null
+          ? await shoot()
+          : await (await cam!.takePicture()).readAsBytes();
       // Saved instantly; upload + analysis continue in the background.
       ref.read(pendingCatchesProvider.notifier).submit(
             jpeg: bytes,
@@ -207,6 +333,15 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
       messenger.hideCurrentSnackBar();
       messenger.showSnackBar(const SnackBar(content: Text(photoSavedMessage)));
       SemanticsService.sendAnnouncement(view, photoSavedMessage, dir);
+      // One photo per visit: back to the map (branch state is kept).
+      if (mounted) {
+        if (GoRouter.maybeOf(context) != null) {
+          context.go('/map');
+        } else {
+          Navigator.of(context).pop();
+        }
+      }
+      return;
     } catch (_) {
       messenger.showSnackBar(const SnackBar(
           content: Text('Nie udało się zrobić zdjęcia — spróbuj ponownie.')));
@@ -230,9 +365,80 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _accelSub?.cancel();
+    for (final s in _geoSubs) {
+      s.cancel();
+    }
+    _liveHintTimer?.cancel();
     _cam?.dispose();
     _bob.dispose();
     super.dispose();
+  }
+
+  List<Widget> _geoLayer(Size size, bool reduceMotion) {
+    final rel = _rel;
+    final out = <Widget>[];
+    if (rel != null) {
+      if (inFov(rel, fovDeg: _fovDeg)) {
+        final px = spriteSizeForDistance(_distance!);
+        final x = screenX(rel, size.width, fovDeg: _fovDeg);
+        final y = screenY(_fusion.elevation ?? targetElevationDeg, size.width,
+            size.height, fovDeg: _fovDeg);
+        Widget sprite = Text(_spriteEmoji,
+            key: const ValueKey('ar-sprite'),
+            style: TextStyle(fontSize: px * 0.8, height: 1));
+        if (!reduceMotion) {
+          sprite = AnimatedBuilder(
+            animation: _bob,
+            builder: (_, child) => Transform.translate(
+                offset: Offset(0, -6 + 12 * _bob.value), child: child),
+            child: sprite,
+          );
+        }
+        out.add(Positioned(
+          left: x - px / 2,
+          top: y - px / 2,
+          width: px,
+          height: px,
+          child: ExcludeSemantics(child: Center(child: sprite)),
+        ));
+      } else {
+        final left = rel < 0;
+        out.add(Positioned(
+          left: left ? 8 : null,
+          right: left ? null : 8,
+          top: size.height / 2 - 28,
+          child: ExcludeSemantics(
+            child: Icon(left ? Icons.arrow_back_ios_new : Icons.arrow_forward_ios,
+                key: ValueKey(left ? 'ar-arrow-left' : 'ar-arrow-right'),
+                color: Colors.white,
+                size: 56),
+          ),
+        ));
+      }
+    }
+    if (_showDebug) {
+      String f(double? v, [int d = 0]) => v == null ? '-' : v.toStringAsFixed(d);
+      out.add(Positioned(
+        top: 100,
+        left: 12,
+        child: Container(
+          key: const ValueKey('ar-debug'),
+          padding: const EdgeInsets.all(8),
+          color: Colors.black87,
+          child: Text(
+            'kurs: ${f(_fusion.heading)}°\n'
+            'namiar: ${f(_bearing)}°\n'
+            'różnica: ${f(rel)}°\n'
+            'nachylenie: ${f(_fusion.elevation)}°\n'
+            'dystans: ${f(_distance, 1)} m\n'
+            'dokładność GPS: ${f(_accuracy, 1)} m\n'
+            'kompas: ${_fusion.magValid ? 'OK' : 'kalibracja'}',
+            style: const TextStyle(color: Colors.white, fontSize: 12),
+          ),
+        ),
+      ));
+    }
+    return out;
   }
 
   @override
@@ -241,7 +447,8 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     if (_error != null) {
       return _Unavailable(message: _error!);
     }
-    if (_initializing || cam == null || !cam.value.isInitialized) {
+    if (_cameraOn &&
+        (_initializing || cam == null || !cam.value.isInitialized)) {
       return Scaffold(
         appBar: AppBar(title: const Text('Kamera AR')),
         body: const Center(
@@ -253,13 +460,15 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     final size = MediaQuery.sizeOf(context);
     final pitchNorm = ((_pitch - _minPitch) / (_maxPitch - _minPitch)).clamp(0.0, 1.0);
     final spriteTop = size.height * 0.25 + pitchNorm * (size.height * 0.35);
-    final preview = cam.value.previewSize;
+    final preview = cam?.value.previewSize;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         fit: StackFit.expand,
         children: [
+          if (cam != null)
           ExcludeSemantics(
             child: ClipRect(
               child: preview == null
@@ -274,7 +483,8 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
                     ),
             ),
           ),
-          if (_pitchOk)
+          if (widget.geoMode) ..._geoLayer(size, reduceMotion),
+          if (!widget.geoMode && _pitchOk)
             Positioned(
               top: spriteTop,
               left: 0,
@@ -292,7 +502,7 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
                 ),
               ),
             ),
-          if (!_pitchOk)
+          if (!widget.geoMode && !_pitchOk)
             Center(
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
@@ -318,10 +528,16 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
                   children: [
                     IconButton(
                       onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.arrow_back, color: Colors.white),
-                      tooltip: 'Wróć',
+                      icon: const Icon(Icons.close, color: Colors.white),
+                      tooltip: 'Zamknij aparat',
                     ),
                     const Spacer(),
+                    if (widget.geoMode)
+                      IconButton(
+                        onPressed: () => setState(() => _showDebug = !_showDebug),
+                        icon: const Icon(Icons.info_outline, color: Colors.white),
+                        tooltip: 'Dane diagnostyczne',
+                      ),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
@@ -356,13 +572,29 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
                       const _Hint('Analizuję zdjęcie… To może potrwać do 30 s.')
                     else if (_gpsFailed)
                       const _Hint('Brak lokalizacji — zdjęcie wymaga GPS.')
-                    else if (!_canCapture)
+                    else if (widget.geoMode) ...[
+                      if (!_fusion.magValid)
+                        const Padding(
+                          padding: EdgeInsets.only(bottom: 6),
+                          child: _Hint('Skalibruj kompas: porusz telefonem ósemką'),
+                        ),
+                      Semantics(
+                        liveRegion: true,
+                        label: _liveHint ?? '',
+                        excludeSemantics: true,
+                        child: _Hint(_geoHint ??
+                            (_lat == null ? 'Czekam na GPS…' : 'Czekam na kompas…')),
+                      ),
+                    ] else if (!_canCapture)
                       _Hint(!_pitchOk ? 'Skieruj kamerę na barierę' : 'Czekam na GPS…'),
                     const SizedBox(height: 8),
                     Semantics(
                       button: true,
                       enabled: _canCapture,
                       label: 'Zrób zdjęcie i złap stworka',
+                      hint: widget.geoMode && !_canCapture
+                          ? 'Niedostępne: wyceluj w stworka z odległości do 80 m'
+                          : null,
                       excludeSemantics: true,
                       onTap: _canCapture ? _capture : null,
                       child: InkWell(

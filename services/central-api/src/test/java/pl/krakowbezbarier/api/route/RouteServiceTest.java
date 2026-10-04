@@ -3,6 +3,7 @@ package pl.krakowbezbarier.api.route;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import pl.krakowbezbarier.api.crowd.CrowdService;
 import pl.krakowbezbarier.api.route.OrsClient.OrsException;
 import pl.krakowbezbarier.api.route.RouteDtos.*;
 
@@ -13,6 +14,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 class RouteServiceTest {
     static final ObjectMapper OM = new ObjectMapper();
@@ -318,5 +321,42 @@ class RouteServiceTest {
         assertEquals("Stromy odcinek (ok. 8%); Nawierzchnia: kostka brukowa", r.segments().get(1).warning());
         assertEquals(3, r.segments().size());
         assertNull(RouteService.warningFor(json("{}"), 0, 3));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void avoidCrowdsSendsAvoidPolygonsInLngLat() throws Exception {
+        CrowdService crowd = mock(CrowdService.class);
+        List<double[]> ring = List.of(new double[]{50.06, 19.93}, new double[]{50.062, 19.93}, new double[]{50.062, 19.934},
+                new double[]{50.06, 19.934}, new double[]{50.06, 19.93});
+        when(crowd.crowdedPolygons(anyDouble(), anyList(), anyInt())).thenReturn(List.of(ring));
+        var fake = new FakeOrs(json(FLAT_JSON));
+        var r = new RouteService(fake, crowd, 10).route(new RouteRequest(req.points(), null, true, false));
+        var opts = (Map<String, Object>) fake.calls.get(0).get("options");
+        var avoid = (Map<String, Object>) opts.get("avoid_polygons");
+        assertEquals("MultiPolygon", avoid.get("type"));
+        assertEquals(List.of(19.93, 50.06), ((List<List<List<List<Double>>>>) avoid.get("coordinates")).get(0).get(0).get(0));
+        assertEquals("Trasa omija zatłoczone miejsca (1)", r.note());
+    }
+
+    @Test
+    void avoidCrowdsRetriesWithoutPolygonsWhenNoRoute() throws Exception {
+        CrowdService crowd = mock(CrowdService.class);
+        when(crowd.crowdedPolygons(anyDouble(), anyList(), anyInt()))
+                .thenReturn(List.of(List.of(new double[]{50, 19}, new double[]{50.1, 19}, new double[]{50, 19})));
+        var fake = new FakeOrs(new OrsException(2009, 404, "no route"), json(FLAT_JSON));
+        var r = new RouteService(fake, crowd, 10).route(new RouteRequest(req.points(), null, true, false));
+        assertEquals(2, fake.calls.size());
+        assertFalse(fake.calls.get(1).containsKey("options"));
+        assertFalse(r.fallback());
+        assertNull(r.note());
+    }
+
+    @Test
+    void noAvoidWithoutFlag() throws Exception {
+        CrowdService crowd = mock(CrowdService.class);
+        var fake = new FakeOrs(json(FLAT_JSON));
+        new RouteService(fake, crowd, 10).route(new RouteRequest(req.points(), req.profile(), false, false));
+        verifyNoInteractions(crowd);
     }
 }

@@ -26,6 +26,8 @@ void openSpawnCamera(BuildContext context, Spawn spawn) {
     'spawnId': spawn.id,
     'emoji': spawn.emoji,
     'name': spawn.name,
+    'spawnLat': spawn.lat.toString(),
+    'spawnLng': spawn.lng.toString(),
   }).toString());
 }
 
@@ -167,16 +169,19 @@ class SpawnSheet extends StatelessWidget {
               Semantics(
                 liveRegion: true,
                 child: Text(
-                  'Podejdź bliżej (≤ ${catchRadiusM.round()} m), aby złapać',
+                  distance.fromGps
+                      ? 'Podejdź bliżej (≤ ${catchRadiusM.round()} m), aby złapać'
+                      : 'Włącz lokalizację, aby złapać stworka',
                   style: text.bodyMedium?.copyWith(color: AppColors.warn),
                 ),
               ),
             ],
             const SizedBox(height: 16),
             FilledButton.icon(
-              onPressed: onCatch,
+              // Too far (or no GPS): catching is blocked right here, not only by the server.
+              onPressed: distance.inRange ? onCatch : null,
               icon: const Icon(Icons.photo_camera_outlined),
-              label: const Text('Złap aparatem'),
+              label: Text(distance.inRange ? 'Złap aparatem' : 'Za daleko'),
             ),
           ],
         ),
@@ -251,10 +256,14 @@ class _NearbySpawnsSectionState extends ConsumerState<NearbySpawnsSection> {
                     label: 'Złap: ${d.spawn.name}',
                     button: true,
                     excludeSemantics: true,
-                    onTap: () => openSpawnCamera(context, d.spawn),
+                    onTap: d.inRange
+                        ? () => openSpawnCamera(context, d.spawn)
+                        : null,
                     child: TextButton(
-                      onPressed: () => openSpawnCamera(context, d.spawn),
-                      child: const Text('Złap'),
+                      onPressed: d.inRange
+                          ? () => openSpawnCamera(context, d.spawn)
+                          : null,
+                      child: Text(d.inRange ? 'Złap' : 'Za daleko'),
                     ),
                   ),
                 ]),

@@ -232,6 +232,7 @@ class RouteService {
     required String startLabel,
     required Place to,
     required NeedsProfile profile,
+    bool avoidCrowds = false,
   }) async {
     final api = this.api;
     if (api != null) {
@@ -247,6 +248,7 @@ class RouteService {
             'maxInclinePct': profile.maxInclinePct,
             'maxSteps': profile.preset == ProfilePreset.stroller ? 2 : 0,
           },
+          'avoidCrowds': avoidCrowds,
         });
         return parseApi(json as Map<String, dynamic>,
             to: to, startLabel: startLabel);
@@ -698,6 +700,7 @@ class RouteNotifier extends Notifier<AsyncValue<PlannedRoute?>> {
           startLabel: label,
           to: to,
           profile: profile,
+          avoidCrowds: ref.read(placeFiltersProvider).avoidCrowds,
         ));
   }
 

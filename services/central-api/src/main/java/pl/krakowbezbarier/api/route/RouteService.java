@@ -3,9 +3,11 @@ package pl.krakowbezbarier.api.route;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import pl.krakowbezbarier.api.common.GeoUtils;
+import pl.krakowbezbarier.api.crowd.CrowdService;
 import pl.krakowbezbarier.api.route.OrsClient.OrsException;
 import pl.krakowbezbarier.api.route.RouteDtos.*;
 
@@ -43,14 +45,23 @@ public class RouteService {
     private static final int[] STEEP_LOWER = {0, 1, 4, 7, 10, 16};
     private static final String[] STEEP_DETAIL = {null, "ok. 2%", "ok. 5%", "ok. 8%", "ok. 12%", "ponad 15%"};
 
+    /** avoidCrowds: cells at or above this crowd are sent to ORS as avoid_polygons (at most AVOID_MAX). */
+    static final double AVOID_THRESHOLD = 0.67;
+    static final int AVOID_MAX = 15;
+
     private final OrsClient ors;
+    private final CrowdService crowd;
     private final Duration cacheTtl;
     private final Map<RouteRequest, CacheEntry> cache = new ConcurrentHashMap<>();
 
     private record CacheEntry(RouteResponse response, Instant expires) {}
 
-    public RouteService(OrsClient ors, @Value("${app.ors.cache-minutes:10}") int cacheMinutes) {
+    public RouteService(OrsClient ors, int cacheMinutes) { this(ors, null, cacheMinutes); }
+
+    @Autowired
+    public RouteService(OrsClient ors, CrowdService crowd, @Value("${app.ors.cache-minutes:10}") int cacheMinutes) {
         this.ors = ors;
+        this.crowd = crowd;
         this.cacheTtl = Duration.ofMinutes(cacheMinutes);
     }
 
@@ -65,9 +76,18 @@ public class RouteService {
             return fallback(req, "Brak klucza OpenRouteService");
         }
         int n = req.points().size();
+        List<List<double[]>> avoid = avoidPolygons(req);
         RouteResponse res;
         try {
-            JsonNode body = ors.directions(FOOT, orsBody(req, false));
+            JsonNode body;
+            try {
+                body = ors.directions(FOOT, orsBody(req, false, avoid));
+            } catch (OrsException e) {
+                if (avoid.isEmpty() || !retryable(e)) throw e;
+                logOrs(FOOT, e, false);
+                avoid = List.of(); // no route around the crowds - take the normal one
+                body = ors.directions(FOOT, orsBody(req, false));
+            }
             res = parseOrs(body, n, false, FOOT);
             List<Barrier> barriers = barriers(body, req.profile());
             res = res.withBarriers(barriers, barriers.isEmpty());
@@ -82,6 +102,9 @@ public class RouteService {
             RouteResponse alt = wheelchair(req);
             res = res.withAlternative(alt);
             if (alt == null) res = res.withNote("Brak trasy bez barier do celu — odcinki z barierami mogą wymagać pomocy");
+        }
+        if (req.avoidCrowds() && res.note() == null) {
+            res = res.withNote(avoid.isEmpty() ? null : "Trasa omija zatłoczone miejsca (" + avoid.size() + ")");
         }
         cache.put(req, new CacheEntry(res, now.plus(cacheTtl)));
         return res;
@@ -202,7 +225,24 @@ public class RouteService {
 
     static Map<String, Object> orsBody(RouteRequest req) { return orsBody(req, true); }
 
+    /** Crowded cells to avoid for this request (empty when not asked for or no crowd data). */
+    List<List<double[]>> avoidPolygons(RouteRequest req) {
+        if (!req.avoidCrowds() || crowd == null) return List.of();
+        try {
+            return crowd.crowdedPolygons(AVOID_THRESHOLD,
+                    req.points().stream().map(p -> new double[]{p.lat(), p.lng()}).toList(), AVOID_MAX);
+        } catch (RuntimeException e) {
+            log.warn("Crowd data unavailable for routing ({})", e.getClass().getSimpleName());
+            return List.of();
+        }
+    }
+
     static Map<String, Object> orsBody(RouteRequest req, boolean withRestrictions) {
+        return orsBody(req, withRestrictions, List.of());
+    }
+
+    /** avoid: [lat, lng] rings, sent as a GeoJSON MultiPolygon ([lng, lat]) in options.avoid_polygons. */
+    static Map<String, Object> orsBody(RouteRequest req, boolean withRestrictions, List<List<double[]>> avoid) {
         List<List<Double>> coords = req.points().stream().map(p -> List.of(p.lng(), p.lat())).toList();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("coordinates", coords);
@@ -222,9 +262,19 @@ public class RouteService {
             // the app no longer sends a user-adjustable width: default to a standard wheelchair (75 cm)
             int widthCm = pr != null && pr.minWidthCm() != null ? pr.minWidthCm() : DEFAULT_MIN_WIDTH_CM;
             restrictions.put("minimum_width", widthCm / 100.0);
-            body.put("options", Map.of("profile_params", Map.of("restrictions", restrictions)));
+            options(body).put("profile_params", Map.of("restrictions", restrictions));
+        }
+        if (avoid != null && !avoid.isEmpty()) {
+            List<List<List<List<Double>>>> polys = avoid.stream()
+                    .map(ring -> List.of(ring.stream().map(p -> List.of(p[1], p[0])).toList())).toList();
+            options(body).put("avoid_polygons", Map.of("type", "MultiPolygon", "coordinates", polys));
         }
         return body;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> options(Map<String, Object> body) {
+        return (Map<String, Object>) body.computeIfAbsent("options", k -> new LinkedHashMap<String, Object>());
     }
 
     static RouteResponse parseOrs(JsonNode body, int pointCount) { return parseOrs(body, pointCount, false, WHEELCHAIR); }

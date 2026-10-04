@@ -50,6 +50,14 @@ app:
     url: ${OVERPASS_URL:https://overpass-api.de/api/interpreter}
     cron: ${OVERPASS_CRON:0 0 4 * * *}
   admin-token: ${ADMIN_TOKEN:}
+  crowd:
+    recompute-ms: 300000
+    # prototype: busy Old Town / quiet outskirts on top of real data (set CROWD_DEMO=false to disable)
+    demo: ${CROWD_DEMO:true}
+  gtfs:
+    # ZTP Kraków open GTFS feeds (trams, buses); empty = skip transit in the crowd base
+    urls: ${GTFS_URLS:https://gtfs.ztp.krakow.pl/GTFS_KRK_T.zip,https://gtfs.ztp.krakow.pl/GTFS_KRK_A.zip}
+    cron: ${GTFS_CRON:0 30 4 * * MON}
 
 springdoc:
   swagger-ui:
