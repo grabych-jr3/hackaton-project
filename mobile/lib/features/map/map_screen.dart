@@ -22,6 +22,9 @@ import '../route/route_layer.dart';
 import '../route/route_panel.dart';
 import '../route/route_service.dart';
 import '../route/route_start.dart';
+import '../spawns/spawn.dart';
+import '../spawns/spawn_providers.dart';
+import '../spawns/spawn_widgets.dart';
 import 'place_filters.dart';
 
 const _krakowCenter = LatLng(50.0590, 19.9390);
@@ -41,10 +44,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool _locating = false;
   bool _routeCollapsed = false;
   StreamSubscription<Position>? _posSub;
+  bool _spawning = false;
+  Timer? _bboxDebounce;
 
   @override
   void dispose() {
     _posSub?.cancel();
+    _bboxDebounce?.cancel();
     super.dispose();
   }
 
@@ -170,6 +176,36 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     }
   }
 
+  /// Debounced: the visible area drives which spawns are fetched.
+  void _onCameraChanged(MapCamera camera) {
+    _bboxDebounce?.cancel();
+    _bboxDebounce = Timer(const Duration(milliseconds: 600), () {
+      if (!mounted) return;
+      final b = camera.visibleBounds;
+      ref.read(spawnBboxProvider.notifier).set(
+          SpawnBbox(b.west, b.south, b.east, b.north));
+    });
+  }
+
+  /// Test helper: places a creature next to the user's GPS position.
+  Future<void> _spawnHere() async {
+    if (ref.read(userLocationProvider) == null) await _locate();
+    final here = ref.read(userLocationProvider)?.point;
+    if (!mounted || here == null) return;
+    setState(() => _spawning = true);
+    try {
+      final spawn =
+          await ref.read(spawnsProvider.notifier).spawnHere(here);
+      if (!mounted) return;
+      _mapController.move(spawn.point, 17);
+      _announce('Stworek pojawił się obok Ciebie — otwórz aparat');
+    } catch (_) {
+      if (mounted) _announce('Nie udało się postawić stworka.');
+    } finally {
+      if (mounted) setState(() => _spawning = false);
+    }
+  }
+
   Future<void> _planRoute(Place place) async {
     setState(() => _routeCollapsed = false);
     await ref.read(routeProvider.notifier).plan(place);
@@ -218,7 +254,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   ),
                 ),
                 const OfflineBanner(),
-                const Expanded(child: PlacesList()),
+                const Expanded(
+                    child: PlacesList(leading: NearbySpawnsSection())),
               ],
             )
           : Stack(
@@ -232,6 +269,8 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     onSelect: _select,
                     onTapMap: () => setState(() => _selected = null),
                     onLongPressMap: _setManualStart,
+                    onCameraChanged: _onCameraChanged,
+                    onSpawnTap: (d) => showSpawnSheet(context, d),
                   ),
                 ),
 
@@ -291,6 +330,14 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                         icon: Icons.my_location_rounded,
                         isLoading: _locating,
                         onPressed: _locating ? null : _locate,
+                      ),
+                      const SizedBox(height: 12),
+                      _GlassMapButton(
+                        tooltip: 'Postaw stworka tutaj (test)',
+                        icon: Icons.add_location_alt_outlined,
+                        isLoading: _spawning,
+                        onPressed:
+                            (_spawning || _locating) ? null : _spawnHere,
                       ),
                     ],
                   ),
@@ -791,8 +838,12 @@ class _PlacesMap extends ConsumerWidget {
     required this.onSelect,
     required this.onTapMap,
     required this.onLongPressMap,
+    this.onCameraChanged,
+    this.onSpawnTap,
   });
 
+  final ValueChanged<MapCamera>? onCameraChanged;
+  final ValueChanged<SpawnDistance>? onSpawnTap;
   final MapController controller;
   final _MapStyle style;
   final Place? selected;
@@ -816,6 +867,9 @@ class _PlacesMap extends ConsumerWidget {
         maxZoom: 19,
         onTap: (_, _) => onTapMap(),
         onLongPress: (_, point) => onLongPressMap(point),
+        onPositionChanged: onCameraChanged == null
+            ? null
+            : (camera, _) => onCameraChanged!(camera),
       ),
       children: [
         // 1. Map Tiles
@@ -966,7 +1020,10 @@ class _PlacesMap extends ConsumerWidget {
           ],
         ),
 
-        // 5. Attribution
+        // 5. Creatures to catch (spawns)
+        SpawnMarkerLayer(onTap: (d) => onSpawnTap?.call(d)),
+
+        // 6. Attribution
         RichAttributionWidget(
           alignment: AttributionAlignment.bottomLeft,
           attributions: [

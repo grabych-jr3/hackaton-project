@@ -32,7 +32,12 @@ GoRouter _buildRouter() => GoRouter(
     GoRoute(
       path: '/catch/camera',
       builder: (context, state) =>
-          ArCatchScreen(placeId: state.uri.queryParameters['placeId']),
+          ArCatchScreen(
+        placeId: state.uri.queryParameters['placeId'],
+        spawnId: state.uri.queryParameters['spawnId'],
+        speciesEmoji: state.uri.queryParameters['emoji'],
+        speciesName: state.uri.queryParameters['name'],
+      ),
     ),
     GoRoute(
       path: '/place/:id',

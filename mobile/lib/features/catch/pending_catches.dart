@@ -242,17 +242,19 @@ class PendingCatchesNotifier extends Notifier<List<PendingCatch>> {
     required double lat,
     required double lng,
     String? placeId,
+    String? spawnId,
   }) {
     final now = DateTime.now();
     final localId = 'local-${now.microsecondsSinceEpoch}-${_seq++}';
     final entry = PendingCatch(
         localId: localId, createdAt: now, status: PendingStatus.uploading, photo: jpeg);
     state = [entry, ...state].take(_maxKept).toList();
-    unawaited(_upload(entry, lat, lng, placeId));
+    unawaited(_upload(entry, lat, lng, placeId, spawnId));
     return localId;
   }
 
-  Future<void> _upload(PendingCatch entry, double lat, double lng, String? placeId) async {
+  Future<void> _upload(PendingCatch entry, double lat, double lng, String? placeId,
+      [String? spawnId]) async {
     final repo = _repo;
     if (repo == null) {
       _finish(entry.copyWith(status: PendingStatus.failed));
@@ -265,6 +267,7 @@ class PendingCatchesNotifier extends Notifier<List<PendingCatch>> {
             lat: lat,
             lng: lng,
             takenAt: entry.createdAt,
+            spawnId: spawnId,
             placeId: placeId);
         _put(_current(entry).copyWith(catchId: id, status: PendingStatus.pending));
         await _persist();
