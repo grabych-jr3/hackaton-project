@@ -47,14 +47,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool _locating = false;
   bool _routeCollapsed = false;
   StreamSubscription<Position>? _posSub;
-<<<<<<< Updated upstream
-  bool _spawning = false;
   Timer? _bboxDebounce;
-=======
   List<CrowdCell> _crowd = const [];
   Timer? _crowdDebounce;
   Timer? _crowdRefresh;
   bool _reporting = false;
+  bool _showCrowdGrid = true;
 
   @override
   void initState() {
@@ -63,17 +61,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         const Duration(minutes: 5), (_) => _loadCrowd());
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadCrowd());
   }
->>>>>>> Stashed changes
 
   @override
   void dispose() {
     _posSub?.cancel();
-<<<<<<< Updated upstream
     _bboxDebounce?.cancel();
-=======
     _crowdDebounce?.cancel();
     _crowdRefresh?.cancel();
->>>>>>> Stashed changes
     super.dispose();
   }
 
@@ -118,10 +112,34 @@ class _MapScreenState extends ConsumerState<MapScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text('Jak tłoczno tutaj?',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text('Jak tłoczno tutaj?',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w700)),
+                  ),
+                  // Shows/hides the crowd grid on the map.
+                  StatefulBuilder(
+                    builder: (context, setSheet) => Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('Siatka', style: TextStyle(fontSize: 13)),
+                        Switch(
+                          value: _showCrowdGrid,
+                          onChanged: (v) {
+                            setSheet(() {});
+                            setState(() => _showCrowdGrid = v);
+                            if (v) _loadCrowd();
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
             for (final (i, label, color) in const [
               (0, 'Luźno', Color(0xFF2E7D32)),
@@ -291,6 +309,7 @@ class _MapScreenState extends ConsumerState<MapScreen> {
 
   /// Debounced: the visible area drives which spawns are fetched.
   void _onCameraChanged(MapCamera camera) {
+    _onMapMoved();
     _bboxDebounce?.cancel();
     _bboxDebounce = Timer(const Duration(milliseconds: 600), () {
       if (!mounted) return;
@@ -298,25 +317,6 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       ref.read(spawnBboxProvider.notifier).set(
           SpawnBbox(b.west, b.south, b.east, b.north));
     });
-  }
-
-  /// Test helper: places a creature next to the user's GPS position.
-  Future<void> _spawnHere() async {
-    if (ref.read(userLocationProvider) == null) await _locate();
-    final here = ref.read(userLocationProvider)?.point;
-    if (!mounted || here == null) return;
-    setState(() => _spawning = true);
-    try {
-      final spawn =
-          await ref.read(spawnsProvider.notifier).spawnHere(here);
-      if (!mounted) return;
-      _mapController.move(spawn.point, 17);
-      _announce('Stworek pojawił się obok Ciebie — otwórz aparat');
-    } catch (_) {
-      if (mounted) _announce('Nie udało się postawić stworka.');
-    } finally {
-      if (mounted) setState(() => _spawning = false);
-    }
   }
 
   Future<void> _planRoute(Place place) async {
@@ -385,13 +385,9 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     onSelect: _select,
                     onTapMap: () => setState(() => _selected = null),
                     onLongPressMap: _setManualStart,
-<<<<<<< Updated upstream
                     onCameraChanged: _onCameraChanged,
                     onSpawnTap: (d) => showSpawnSheet(context, d),
-=======
-                    crowd: _crowd,
-                    onMoved: _onMapMoved,
->>>>>>> Stashed changes
+                    crowd: _showCrowdGrid ? _crowd : const [],
                   ),
                 ),
 
@@ -454,18 +450,10 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       ),
                       const SizedBox(height: 12),
                       _GlassMapButton(
-<<<<<<< Updated upstream
-                        tooltip: 'Postaw stworka tutaj (test)',
-                        icon: Icons.add_location_alt_outlined,
-                        isLoading: _spawning,
-                        onPressed:
-                            (_spawning || _locating) ? null : _spawnHere,
-=======
                         tooltip: 'Jak tłoczno?',
                         icon: Icons.groups_rounded,
                         isLoading: _reporting,
                         onPressed: _reporting ? null : _askCrowd,
->>>>>>> Stashed changes
                       ),
                     ],
                   ),
@@ -968,21 +956,14 @@ class _PlacesMap extends ConsumerWidget {
     required this.onSelect,
     required this.onTapMap,
     required this.onLongPressMap,
-<<<<<<< Updated upstream
     this.onCameraChanged,
     this.onSpawnTap,
+    this.crowd = const [],
   });
 
   final ValueChanged<MapCamera>? onCameraChanged;
   final ValueChanged<SpawnDistance>? onSpawnTap;
-=======
-    this.crowd = const [],
-    this.onMoved,
-  });
-
   final List<CrowdCell> crowd;
-  final VoidCallback? onMoved;
->>>>>>> Stashed changes
   final MapController controller;
   final _MapStyle style;
   final Place? selected;
@@ -1006,13 +987,9 @@ class _PlacesMap extends ConsumerWidget {
         maxZoom: 19,
         onTap: (_, _) => onTapMap(),
         onLongPress: (_, point) => onLongPressMap(point),
-<<<<<<< Updated upstream
         onPositionChanged: onCameraChanged == null
             ? null
             : (camera, _) => onCameraChanged!(camera),
-=======
-        onPositionChanged: (_, _) => onMoved?.call(),
->>>>>>> Stashed changes
       ),
       children: [
         // 1. Map Tiles
