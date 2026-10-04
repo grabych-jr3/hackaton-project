@@ -3,6 +3,7 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../game/creature_image.dart';
 import '../game/game_models.dart';
 import '../game/game_providers.dart';
 import '../place/status_chip.dart';
@@ -158,8 +159,9 @@ class _SpeciesTile extends StatelessWidget {
       children: [
         caught
             ? (soldOut
-                ? Grayscale(child: Text(species.emoji, style: const TextStyle(fontSize: 34)))
-                : Text(species.emoji, style: const TextStyle(fontSize: 34)))
+                ? Grayscale(
+                    child: CreatureImage(speciesId: species.id, emoji: species.emoji, size: 56))
+                : CreatureImage(speciesId: species.id, emoji: species.emoji, size: 56))
             : const Icon(Icons.lock_outline_rounded, size: 34, color: AppColors.textDim),
         const SizedBox(height: 4),
         Text(
@@ -362,10 +364,10 @@ class _SpeciesSellSheetState extends ConsumerState<SpeciesSellSheet> {
           children: [
             ExcludeSemantics(
               child: owned > 0
-                  ? Text(s.emoji, textAlign: TextAlign.center, style: const TextStyle(fontSize: 72))
+                  ? Center(child: CreatureImage(speciesId: s.id, emoji: s.emoji, size: 140))
                   : Grayscale(
-                      child: Text(s.emoji,
-                          textAlign: TextAlign.center, style: const TextStyle(fontSize: 72)),
+                      child: Center(
+                          child: CreatureImage(speciesId: s.id, emoji: s.emoji, size: 140)),
                     ),
             ),
             const SizedBox(height: 8),

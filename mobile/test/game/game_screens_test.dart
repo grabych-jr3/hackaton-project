@@ -86,10 +86,10 @@ void main() {
     });
     await pumpScreen(tester, const CollectionScreen());
 
-    expect(find.text('Smok'), findsOneWidget);
+    expect(find.text('Smok Wawelski'), findsOneWidget);
     expect(find.text('×2'), findsOneWidget);
-    expect(find.text('???'), findsNWidgets(7));
-    expect(find.text('Odkryto 1/8'), findsOneWidget);
+    expect(find.text('???'), findsNWidgets(9));
+    expect(find.text('Odkryto 1/10'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('Nowa Huta'), 200, scrollable: find.byType(Scrollable).first);
     expect(find.text('Odkryte miasto'), findsOneWidget);
   });
@@ -103,10 +103,10 @@ void main() {
 
     expect(find.text('Saldo: 10 pkt'), findsOneWidget);
     expect(find.text('Sprzedaj · 25 pkt'), findsOneWidget);
-    expect(find.bySemanticsLabel('Sowa, rzadki, posiadasz 3, wartość 25 punktów'),
+    expect(find.bySemanticsLabel('Motylosmok, rzadki, posiadasz 3, wartość 25 punktów'),
         findsOneWidget);
 
-    await tester.tap(find.text('Sowa'));
+    await tester.tap(find.text('Motylosmok'));
     await tester.pumpAndSettle();
     expect(find.text('Sprzedaj (1) za 25 pkt'), findsOneWidget);
     expect(find.textContaining('Collegium Maius'), findsOneWidget);
@@ -123,7 +123,7 @@ void main() {
     await tester.tap(find.text('Potwierdź'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Sprzedano 2 × Sowa za 50 pkt'), findsOneWidget);
+    expect(find.text('Sprzedano 2 × Motylosmok za 50 pkt'), findsOneWidget);
     expect(find.text('Saldo: 60 pkt'), findsOneWidget);
     expect(find.text('×1'), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -146,15 +146,15 @@ void main() {
     await pumpScreen(tester, const CollectionScreen());
 
     expect(find.text('sprzedane'), findsOneWidget);
-    final smok = find.ancestor(of: find.text('Smok'), matching: find.byType(Column)).first;
+    final smok = find.ancestor(of: find.text('Smok Wawelski'), matching: find.byType(Column)).first;
     expect(find.descendant(of: smok, matching: find.byType(Grayscale)), findsOneWidget);
     expect(find.descendant(of: smok, matching: find.byType(ColorFiltered)), findsOneWidget);
-    final sowa = find.ancestor(of: find.text('Sowa'), matching: find.byType(Column)).first;
+    final sowa = find.ancestor(of: find.text('Motylosmok'), matching: find.byType(Column)).first;
     expect(find.descendant(of: sowa, matching: find.byType(ColorFiltered)), findsNothing);
     expect(find.byType(Grayscale), findsOneWidget);
-    expect(find.bySemanticsLabel('Smok, legendarny, sprzedany, brak w kolekcji'), findsOneWidget);
+    expect(find.bySemanticsLabel('Smok Wawelski, legendarny, sprzedany, brak w kolekcji'), findsOneWidget);
 
-    await tester.tap(find.text('Smok'));
+    await tester.tap(find.text('Smok Wawelski'));
     await tester.pumpAndSettle();
     expect(find.text('Nie masz już tego stworka — złap go ponownie'), findsOneWidget);
     expect(find.descendant(of: find.byType(BottomSheet), matching: find.byType(Grayscale)),

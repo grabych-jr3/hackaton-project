@@ -11,7 +11,7 @@ void main() {
   final catalog = loadCatalog();
 
   test('catalog parses and filters unverified partners', () {
-    expect(catalog.species, hasLength(8));
+    expect(catalog.species, hasLength(10));
     expect(catalog.offers.any((o) => !o.verifiedAccess), isTrue);
     expect(catalog.verifiedOffers.every((o) => o.verifiedAccess), isTrue);
   });
@@ -44,7 +44,7 @@ void main() {
     final (next, result) = rules.submitReport(
         start, const BarrierReport(steps: 5, curb: CurbRange.high, passage: PassageWidth.narrow, noRamp: true, uneven: true, obstacles: true));
     expect(result.species.rarity, Rarity.legendary);
-    expect(result.species.name, 'Smok');
+    expect(result.species.name, 'Smok Wawelski');
     expect(result.points, 150); // sell value, not awarded
     expect(next.points, 100);
     expect(next.caught['smok'], 1);

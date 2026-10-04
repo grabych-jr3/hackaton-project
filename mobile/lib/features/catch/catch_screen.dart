@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/repositories/catch_repository.dart';
 import '../../data/repositories/places_repository.dart';
+import '../game/creature_image.dart';
 import '../game/game_models.dart';
 import '../game/game_providers.dart';
 import '../place/status_chip.dart';
@@ -78,7 +79,8 @@ class _CatchScreenState extends ConsumerState<CatchScreen> {
                 shape: BoxShape.circle,
                 border: Border.all(color: AppColors.primary),
               ),
-              child: Text(result.species.emoji, style: const TextStyle(fontSize: 48)),
+              child: CreatureImage(
+                  speciesId: result.species.id, emoji: result.species.emoji, size: 96),
             ),
             const SizedBox(height: 12),
             Text(

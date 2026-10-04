@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../data/repositories/catch_repository.dart';
+import '../game/creature_image.dart';
 import '../game/game_models.dart';
 import '../map/place_filters.dart' show formatDistance;
 import '../route/route_start.dart';
@@ -60,12 +61,13 @@ enum CatchExit {
 /// A creature drawn in AR.
 class _ArItem {
   const _ArItem(this.id, this.lat, this.lng, this.emoji, this.name,
-      {this.caught = false});
+      {this.caught = false, this.speciesId});
   final String id;
   final double lat, lng;
   final String emoji;
   final String name;
   final bool caught;
+  final String? speciesId;
 }
 
 /// One projected creature for the current frame.
@@ -87,6 +89,7 @@ class ArCatchScreen extends ConsumerStatefulWidget {
     this.placeId,
     this.spawnId,
     this.speciesEmoji,
+    this.speciesId,
     this.speciesName,
     this.spawnLat,
     this.spawnLng,
@@ -99,6 +102,7 @@ class ArCatchScreen extends ConsumerStatefulWidget {
   /// Map spawn being caught (initial target).
   final String? spawnId;
   final String? speciesEmoji;
+  final String? speciesId;
   final String? speciesName;
 
   /// Geographic anchor of the route-param creature; both set = it is always
@@ -178,12 +182,14 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
     if (widget.geoMode) {
       out.add(_ArItem(widget.spawnId ?? 'route', widget.spawnLat!,
           widget.spawnLng!, widget.speciesEmoji ?? _fallbackEmoji,
-          widget.speciesName ?? 'Stworek'));
+          widget.speciesName ?? 'Stworek',
+          speciesId: widget.speciesId));
     }
     for (final s in _spawns) {
       if (out.any((i) => i.id == s.id)) continue;
       if (_distTo(s.lat, s.lng) > arShowRadiusM) continue;
-      out.add(_ArItem(s.id, s.lat, s.lng, s.emoji, s.name, caught: s.caughtByMe));
+      out.add(_ArItem(s.id, s.lat, s.lng, s.emoji, s.name,
+          caught: s.caughtByMe, speciesId: s.speciesId));
     }
     return out;
   }
@@ -557,9 +563,11 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
   Widget _sprite(_Shown s, bool isTarget, bool reduceMotion) {
     final px = s.proj.size * (isTarget ? 1 : 0.8);
     final pos = s.pos!;
-    Widget emoji = Text(s.item.emoji,
+    Widget emoji = CreatureImage(
         key: isTarget ? const ValueKey('ar-sprite') : null,
-        style: TextStyle(fontSize: px * 0.8, height: 1));
+        speciesId: s.item.speciesId,
+        emoji: s.item.emoji,
+        size: px * 0.8);
     if (!reduceMotion) {
       emoji = AnimatedBuilder(
         animation: _bob,
@@ -997,7 +1005,7 @@ Future<CatchExit?> showCatchOutcomeDialog(
           title: Column(
             children: [
               ExcludeSemantics(
-                child: Text(species.emoji, style: const TextStyle(fontSize: 48)),
+                child: CreatureImage(speciesId: species.id, emoji: species.emoji, size: 96),
               ),
               const SizedBox(height: 8),
               Text(

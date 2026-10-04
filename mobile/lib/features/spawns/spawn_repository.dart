@@ -62,12 +62,14 @@ class DemoSpawnRepository implements SpawnRepository {
   }
 
   static const _pool = [
-    ('golab', 'Gołąb', '🐦', Rarity.common),
-    ('jez', 'Jeż', '🦔', Rarity.common),
-    ('lis', 'Lis', '🦊', Rarity.common),
-    ('sowa', 'Sowa', '🦉', Rarity.rare),
-    ('wydra', 'Wydra', '🦦', Rarity.rare),
-    ('smok', 'Smok', '🐉', Rarity.legendary),
+    ('golab', 'Szop Liściak', '🦝', Rarity.common),
+    ('jez', 'Kryształowy Zając', '🐇', Rarity.common),
+    ('lis', 'Lodowy Lis', '🦊', Rarity.common),
+    ('jaszczur', 'Gwiezdny Jaszczur', '🦎', Rarity.common),
+    ('plaszczka', 'Kosmiczna Płaszczka', '🌌', Rarity.rare),
+    ('sowa', 'Motylosmok', '🦋', Rarity.rare),
+    ('wydra', 'Bąbelkowa Ośmiornica', '🐙', Rarity.rare),
+    ('smok', 'Smok Wawelski', '🐉', Rarity.legendary),
   ];
 
   @override
