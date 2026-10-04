@@ -45,6 +45,19 @@ class ApiClient {
   Future<dynamic> get(String path, {bool auth = false}) =>
       _send('GET', path, auth: auth);
 
+  /// Raw bytes (e.g. a thumbnail), authenticated. [pathOrUrl] may be absolute.
+  Future<List<int>> getBytes(String pathOrUrl, {bool retried = false}) async {
+    final uri = pathOrUrl.startsWith('http') ? Uri.parse(pathOrUrl) : _uri(pathOrUrl);
+    final res = await _client.get(uri,
+        headers: {'Authorization': 'Bearer ${await _ensureToken()}'}).timeout(timeout);
+    if (res.statusCode == 401 && !retried) {
+      await _clearToken();
+      return getBytes(pathOrUrl, retried: true);
+    }
+    if (res.statusCode < 200 || res.statusCode >= 300) throw ApiException(res.statusCode);
+    return res.bodyBytes;
+  }
+
   Future<dynamic> post(String path, {Object? body, bool auth = false}) =>
       _send('POST', path, body: body, auth: auth);
 

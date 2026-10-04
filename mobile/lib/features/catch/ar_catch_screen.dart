@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:sensors_plus/sensors_plus.dart';
@@ -11,7 +12,11 @@ import 'package:sensors_plus/sensors_plus.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/repositories/catch_repository.dart';
 import '../game/game_models.dart';
-import '../game/game_providers.dart';
+import 'pending_catches.dart';
+
+/// Shown right after the shutter.
+const photoSavedMessage =
+    'Zdjęcie zapisane — analizujemy w tle. Damy znać, gdy stworek się pojawi.';
 
 /// How the AR camera screen was left (popped as the route result).
 enum CatchExit {
@@ -179,28 +184,27 @@ class _ArCatchScreenState extends ConsumerState<ArCatchScreen>
       return;
     }
     setState(() => _capturing = true);
-    CatchPhotoResponse? response;
+    final messenger = ScaffoldMessenger.of(context);
+    final view = View.of(context);
+    final dir = Directionality.of(context);
     try {
       final file = await cam.takePicture();
       final bytes = await file.readAsBytes();
-      response = await repo.submitPhoto(
-        jpegBytes: bytes,
-        lat: _lat!,
-        lng: _lng!,
-        placeId: widget.placeId,
-      );
+      // Saved instantly; upload + analysis continue in the background.
+      ref.read(pendingCatchesProvider.notifier).submit(
+            jpeg: bytes,
+            lat: _lat!,
+            lng: _lng!,
+            placeId: widget.placeId,
+          );
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(const SnackBar(content: Text(photoSavedMessage)));
+      SemanticsService.sendAnnouncement(view, photoSavedMessage, dir);
     } catch (_) {
-      response = null;
+      messenger.showSnackBar(const SnackBar(
+          content: Text('Nie udało się zrobić zdjęcia — spróbuj ponownie.')));
     }
-    if (!mounted) return;
-    setState(() => _capturing = false);
-
-    if (response != null && response.status == CatchStatus.ok) {
-      ref.read(gameProvider.notifier).applyCatch(response.state);
-    }
-    final exit = await showCatchOutcomeDialog(context, response);
-    if (!mounted || exit == null) return;
-    Navigator.of(context).pop(exit);
+    if (mounted) setState(() => _capturing = false);
   }
 
   @override
@@ -547,6 +551,17 @@ Future<CatchExit?> showCatchOutcomeDialog(
               ],
             ),
           ),
+          actionsAlignment: MainAxisAlignment.center,
+          actions: [action('Do kolekcji', CatchExit.collection, ctx)],
+        );
+      }
+      if (status == CatchStatus.ok) {
+        // OK without species details: the creature is already in the collection.
+        return AlertDialog(
+          backgroundColor: AppColors.surfaceElevated,
+          title: const Text('Analiza zakończona'),
+          content: const Text('Stworek trafił do Twojej Kolekcji.',
+              style: TextStyle(color: AppColors.text)),
           actionsAlignment: MainAxisAlignment.center,
           actions: [action('Do kolekcji', CatchExit.collection, ctx)],
         );
