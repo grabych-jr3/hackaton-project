@@ -47,7 +47,10 @@ app:
     base-url: ${ORS_BASE_URL:https://api.openrouteservice.org}
     cache-minutes: 10
   overpass:
-    url: ${OVERPASS_URL:https://overpass-api.de/api/interpreter}
+    # comma-separated mirrors tried in order; blank -> built-in default list (see OverpassAdapter.DEFAULT_URLS)
+    urls: ${OVERPASS_URLS:${OVERPASS_URL:}}
+    snapshot: classpath:seed/osm_krakow_center.json
+    startup-import: ${OVERPASS_STARTUP_IMPORT:true}
     cron: ${OVERPASS_CRON:0 0 4 * * *}
   admin-token: ${ADMIN_TOKEN:}
 
