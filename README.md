@@ -117,9 +117,8 @@ Więcej schematów (przepływ zdjęcia, model tłumów): **[ARCHITEKTURA.md](ARC
 **Wymagania:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) lub Docker Engine z Compose v2, ok. 6 GB wolnego miejsca, wolne porty `3000`, `8080`, `8000`, `5432`, `19092`.
 
 ```bash
-git clone <adres-repozytorium> clearpath
-cd clearpath
-cp .env.example .env          # PowerShell: Copy-Item .env.example .env
+git clone https://github.com/grabych-jr3/hackaton-project.git
+cd hackaton-project
 docker compose up --build
 ```
 
@@ -128,7 +127,6 @@ Pierwsze uruchomienie trwa kilka–kilkanaście minut (budowa obrazów Java, Pyt
 | Co | Adres |
 |---|---|
 | 📱 Aplikacja (Flutter Web) | http://localhost:3000 |
-| 📘 Dokumentacja API (Swagger) | http://localhost:8080/swagger-ui.html |
 | 💚 Stan API | http://localhost:8080/health |
 
 Zatrzymanie: `docker compose down` (z `-v` usuwa też bazę i zdjęcia).
