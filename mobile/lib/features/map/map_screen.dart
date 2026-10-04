@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
@@ -8,13 +11,25 @@ import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../../core/widgets/offline_banner.dart';
+import '../../data/models/accessibility_fact.dart';
+import '../../data/models/crowd.dart';
+import '../../data/repositories/crowd_repository.dart';
+import 'crowd_cloud_layer.dart';
+import '../game/game_providers.dart';
 import '../../data/models/place.dart';
 import '../place/place_labels.dart';
 import '../place/place_providers.dart';
 import '../place/places_list.dart';
 import '../place/status_chip.dart';
+import '../route/route_layer.dart';
 import '../route/route_panel.dart';
 import '../route/route_service.dart';
+import '../route/route_start.dart';
+import '../spawns/spawn.dart';
+import '../spawns/spawn_offset.dart';
+import '../spawns/spawn_providers.dart';
+import '../spawns/spawn_widgets.dart';
 import 'place_filters.dart';
 
 const _krakowCenter = LatLng(50.0590, 19.9390);
@@ -31,9 +46,231 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   bool _showList = false;
   Place? _selected;
   _MapStyle _style = _MapStyle.dark;
-  LatLng? _myLocation;
   bool _locating = false;
   bool _routeCollapsed = false;
+  StreamSubscription<Position>? _posSub;
+  bool _spawning = false;
+  Timer? _bboxDebounce;
+  List<CrowdCell> _crowd = const [];
+  Timer? _crowdDebounce;
+  Timer? _crowdRefresh;
+  bool _reporting = false;
+  bool _showCrowdGrid = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _crowdRefresh = Timer.periodic(
+        const Duration(minutes: 5), (_) => _loadCrowd());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadCrowd());
+  }
+
+  @override
+  void dispose() {
+    _posSub?.cancel();
+    _bboxDebounce?.cancel();
+    _crowdDebounce?.cancel();
+    _crowdRefresh?.cancel();
+    super.dispose();
+  }
+
+  /// Fetches crowd cells for the visible area (the layer is always shown).
+  Future<void> _loadCrowd() async {
+    final repo = ref.read(crowdRepositoryProvider);
+    if (repo == null || !mounted) return;
+    final LatLngBounds b;
+    try {
+      b = _mapController.camera.visibleBounds;
+    } catch (_) {
+      return; // map not rendered yet
+    }
+    try {
+      final cells = await repo.getCells(
+          minLat: b.south, minLng: b.west, maxLat: b.north, maxLng: b.east);
+      if (mounted) setState(() => _crowd = cells);
+    } catch (_) {
+      // Keep the previous layer on network/API errors.
+    }
+  }
+
+  void _onMapMoved() {
+    _crowdDebounce?.cancel();
+    _crowdDebounce = Timer(const Duration(milliseconds: 600), _loadCrowd);
+  }
+
+  /// "Jak tłoczno?" — rates the crowd at the user's location.
+  Future<void> _askCrowd() async {
+    final repo = ref.read(crowdRepositoryProvider);
+    final messenger = ScaffoldMessenger.of(context);
+    void say(String msg) => messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(msg)));
+    if (repo == null) {
+      return say('Ocena tłoku wymaga połączenia z serwerem.');
+    }
+    final level = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: AppColors.surfaceElevated,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text('Jak tłoczno tutaj?',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.w700)),
+                  ),
+                  // Shows/hides the crowd grid on the map.
+                  StatefulBuilder(
+                    builder: (context, setSheet) => Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('Siatka', style: TextStyle(fontSize: 13)),
+                        Switch(
+                          value: _showCrowdGrid,
+                          onChanged: (v) {
+                            setSheet(() {});
+                            setState(() => _showCrowdGrid = v);
+                            if (v) _loadCrowd();
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            for (final (i, label, color) in const [
+              (0, 'Luźno', Color(0xFF2E7D32)),
+              (1, 'Średnio', Color(0xFFFFA000)),
+              (2, 'Tłoczno', Color(0xFFD32F2F)),
+            ])
+              ListTile(
+                leading: Icon(Icons.circle, color: color),
+                title: Text(label),
+                onTap: () => Navigator.of(context).pop(i),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (level == null || !mounted) return;
+    var loc = ref.read(userLocationProvider);
+    if (loc == null) {
+      await _locate();
+      if (!mounted) return;
+      loc = ref.read(userLocationProvider);
+    }
+    // Outside Kraków (e.g. testing from home): rate the place in the middle of the map instead.
+    final point = loc == null || loc.isFarFromKrakow
+        ? _mapController.camera.center
+        : loc.point;
+    setState(() => _reporting = true);
+    try {
+      final res = await repo.report(point, level);
+      if (!mounted) return;
+      if (res.awarded > 0) ref.invalidate(gameProvider);
+      say(res.awarded > 0
+          ? 'Dzięki za ocenę! +${res.awarded} pkt'
+          : 'Dzięki za ocenę!');
+      _loadCrowd();
+    } on CrowdReportException catch (e) {
+      say(e.message);
+    } catch (_) {
+      say('Nie udało się wysłać oceny. Spróbuj ponownie.');
+    } finally {
+      if (mounted) setState(() => _reporting = false);
+    }
+  }
+
+  /// High-accuracy settings per platform (desktop browsers may still
+  /// geolocate by Wi-Fi/IP — accuracy is shown and checked).
+  static LocationSettings _settings({int distanceFilter = 0}) {
+    if (kIsWeb) {
+      return WebSettings(
+        accuracy: LocationAccuracy.high,
+        maximumAge: Duration.zero,
+        timeLimit: const Duration(seconds: 15),
+        distanceFilter: distanceFilter,
+      );
+    }
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        forceLocationManager: false,
+        distanceFilter: distanceFilter,
+      );
+    }
+    return LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: distanceFilter,
+    );
+  }
+
+  void _announce(String msg) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Semantics(liveRegion: true, child: Text(msg)),
+        duration: const Duration(seconds: 6),
+      ));
+    SemanticsService.sendAnnouncement(
+        View.of(context), msg, Directionality.of(context));
+  }
+
+  void _setPosition(Position pos) {
+    ref.read(userLocationProvider.notifier).set(UserLocation(
+        LatLng(pos.latitude, pos.longitude),
+        accuracyM: pos.accuracy));
+  }
+
+  /// Warns about an inaccurate or far-away fix (Polish, announced).
+  void _warnAboutLocation(UserLocation loc) {
+    if (loc.isFarFromKrakow) {
+      _announce('Jesteś poza Krakowem — trasa zacznie się od Rynku Głównego. '
+          'Przytrzymaj mapę, aby wybrać start.');
+    } else if (loc.accuracyM > warnAccuracyM) {
+      _announce('Lokalizacja niedokładna (${formatAccuracy(loc.accuracyM)}). '
+          'Przytrzymaj mapę, aby ustawić start.');
+    }
+  }
+
+  void _setManualStart(LatLng point) {
+    ref.read(manualStartProvider.notifier).set(point);
+    ref.read(startPreferenceProvider.notifier).set(StartPreference.auto);
+    _announce('Start ustawiony');
+    ref.read(routeProvider.notifier).replan();
+  }
+
+  void _clearManualStart() {
+    ref.read(manualStartProvider.notifier).clear();
+    ref.read(startPreferenceProvider.notifier).set(StartPreference.auto);
+    ref.read(routeProvider.notifier).replan();
+  }
+
+  /// Cycles Rynek → GPS → chosen point (only options that are available).
+  void _cycleStart() {
+    final manual = ref.read(manualStartProvider);
+    final gps = ref.read(userLocationProvider);
+    final options = availableStarts(manual: manual, gps: gps);
+    final current = selectStart(
+            manual: manual,
+            gps: gps,
+            preference: ref.read(startPreferenceProvider))
+        .kind;
+    final next = options[(options.indexOf(current) + 1) % options.length];
+    ref.read(startPreferenceProvider.notifier).set(switch (next) {
+      StartKind.manual => StartPreference.manual,
+      StartKind.gps => StartPreference.gps,
+      StartKind.rynek => StartPreference.rynek,
+    });
+    ref.read(routeProvider.notifier).replan();
+  }
 
   Future<void> _locate() async {
     final messenger = ScaffoldMessenger.of(context);
@@ -53,16 +290,19 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           permission == LocationPermission.deniedForever) {
         return fail('Brak zgody na lokalizację.');
       }
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-          timeLimit: Duration(seconds: 15),
-        ),
-      );
+      final pos =
+          await Geolocator.getCurrentPosition(locationSettings: _settings());
       final here = LatLng(pos.latitude, pos.longitude);
       if (!mounted) return;
-      setState(() => _myLocation = here);
+      _setPosition(pos);
       _mapController.move(here, 16);
+      _warnAboutLocation(ref.read(userLocationProvider)!);
+      // Follow the user while the map is open.
+      _posSub ??= Geolocator.getPositionStream(
+              locationSettings: _settings(distanceFilter: 10))
+          .listen((p) {
+        if (mounted) _setPosition(p);
+      }, onError: (_) {});
     } catch (_) {
       fail('Nie udało się ustalić lokalizacji.');
     } finally {
@@ -70,9 +310,43 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     }
   }
 
+  /// Debounced: the visible area drives which spawns are fetched.
+  void _onCameraChanged(MapCamera camera) {
+    _onMapMoved();
+    _bboxDebounce?.cancel();
+    _bboxDebounce = Timer(const Duration(milliseconds: 600), () {
+      if (!mounted) return;
+      final b = camera.visibleBounds;
+      ref.read(spawnBboxProvider.notifier).set(
+          SpawnBbox(b.west, b.south, b.east, b.north));
+    });
+  }
+
+  /// Test helper: places a creature in front of the user's FRESH GPS fix
+  /// (never the map centre), then centres the map on it.
+  Future<void> _spawnHere() async {
+    setState(() => _spawning = true);
+    try {
+      // In front of the user (heading) so it shows up in the AR camera.
+      final heading = await ref.read(currentHeadingProvider)();
+      if (!mounted) return;
+      final spawn = await ref
+          .read(spawnsProvider.notifier)
+          .spawnAtGps(headingDeg: heading);
+      if (!mounted) return;
+      if (spawn == null) return _announce(spawnNoFixMessage);
+      _mapController.move(spawn.point, 17);
+      _announce('Stworek pojawił się obok Ciebie — otwórz aparat');
+    } catch (_) {
+      if (mounted) _announce('Nie udało się postawić stworka.');
+    } finally {
+      if (mounted) setState(() => _spawning = false);
+    }
+  }
+
   Future<void> _planRoute(Place place) async {
     setState(() => _routeCollapsed = false);
-    await ref.read(routeProvider.notifier).plan(place, myLocation: _myLocation);
+    await ref.read(routeProvider.notifier).plan(place);
     final points = ref.read(routeProvider).value?.points;
     if (!mounted || points == null || points.length < 2) return;
     _mapController.fitCamera(CameraFit.coordinates(
@@ -80,6 +354,11 @@ class _MapScreenState extends ConsumerState<MapScreen> {
       padding: const EdgeInsets.fromLTRB(40, 160, 40, 380),
     ));
   }
+
+  void _toggleList() => setState(() {
+        _showList = !_showList;
+        _selected = null;
+      });
 
   void _select(Place place) {
     setState(() => _selected = place);
@@ -89,59 +368,35 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   @override
   Widget build(BuildContext context) {
     final route = ref.watch(routeProvider);
+    final hasManualStart = ref.watch(manualStartProvider) != null;
+    ref.listen(placeFiltersProvider.select((f) => f.avoidCrowds), (_, on) {
+      ref.read(routeProvider.notifier).replan();
+    });
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: AppColors.mint100,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppColors.mint300),
-              ),
-              child: const Icon(Icons.explore_rounded, color: AppColors.primary, size: 20),
-            ),
-            const SizedBox(width: 10),
-            const Flexible(
-              child: Text(
-                'Kraków bez barier',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton.icon(
-            style: TextButton.styleFrom(
-              foregroundColor: AppColors.primary,
-              backgroundColor: AppColors.surfaceElevated,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: const BorderSide(color: AppColors.border),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            ),
-            onPressed: () => setState(() {
-              _showList = !_showList;
-              _selected = null;
-            }),
-            icon: Icon(_showList ? Icons.map_rounded : Icons.view_list_rounded, size: 18),
-            label: Text(_showList ? 'Mapa' : 'Lista'),
-          ),
-          const SizedBox(width: 16),
-        ],
-      ),
-      body: _showList
+      body: SafeArea(
+        bottom: false,
+        child: _showList
           ? Column(
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                  child: _FloatingSearchIsland(onSubmitted: null),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: _FloatingSearchIsland(onSubmitted: null)),
+                      const SizedBox(width: 8),
+                      _GlassMapButton(
+                        tooltip: 'Pokaż mapę',
+                        icon: Icons.map_outlined,
+                        onPressed: _toggleList,
+                      ),
+                    ],
+                  ),
                 ),
-                const Expanded(child: PlacesList()),
+                const OfflineBanner(),
+                const Expanded(
+                    child: PlacesList(leading: NearbySpawnsSection())),
               ],
             )
           : Stack(
@@ -151,10 +406,13 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   child: _PlacesMap(
                     controller: _mapController,
                     style: _style,
-                    myLocation: _myLocation,
                     selected: _selected,
                     onSelect: _select,
                     onTapMap: () => setState(() => _selected = null),
+                    onLongPressMap: _setManualStart,
+                    onCameraChanged: _onCameraChanged,
+                    onSpawnTap: (d) => showSpawnSheet(context, d),
+                    crowd: _showCrowdGrid ? _crowd : const [],
                   ),
                 ),
 
@@ -166,11 +424,20 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                   child: _FloatingSearchIsland(onSubmitted: _select),
                 ),
 
+                // Offline notice (API mode, server unreachable).
+                const Positioned(
+                  top: 112,
+                  left: 16,
+                  right: 72,
+                  child: Align(alignment: Alignment.topLeft, child: OfflineBanner()),
+                ),
+
                 // 3. Floating Map Controls (Right Side)
                 Positioned(
                   top: 150,
                   right: 16,
                   child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       _GlassMapButton(
                         tooltip: _style == _MapStyle.dark
@@ -193,12 +460,33 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                           }
                         }),
                       ),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 12),
+                      _GlassMapButton(
+                        tooltip: 'Lista miejsc',
+                        icon: Icons.castle_outlined,
+                        onPressed: _toggleList,
+                      ),
+                      const SizedBox(height: 12),
                       _GlassMapButton(
                         tooltip: 'Moja lokalizacja',
                         icon: Icons.my_location_rounded,
                         isLoading: _locating,
                         onPressed: _locating ? null : _locate,
+                      ),
+                      const SizedBox(height: 12),
+                      _GlassMapButton(
+                        tooltip: 'Jak tłoczno?',
+                        icon: Icons.groups_rounded,
+                        isLoading: _reporting,
+                        onPressed: _reporting ? null : _askCrowd,
+                      ),
+                      const SizedBox(height: 12),
+                      _GlassMapButton(
+                        tooltip: 'Postaw stworka tutaj (test)',
+                        icon: Icons.add_location_alt_outlined,
+                        isLoading: _spawning,
+                        onPressed:
+                            (_spawning || _locating) ? null : _spawnHere,
                       ),
                     ],
                   ),
@@ -220,16 +508,26 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                     bottom: 96,
                     child: _routeCollapsed
                         ? RouteCollapsedBar(
+                            // Shows the route the user is looking at (walking or accessible).
                             route: route.value!,
+                            showBarriers: ref.watch(routeBarriersEnabledProvider),
+                            showAlternative: ref.watch(showAlternativeProvider),
+                            onToggleAlternative: () => ref
+                                .read(alternativeChoiceProvider.notifier)
+                                .state = !ref.read(showAlternativeProvider),
                             onExpand: () => setState(() => _routeCollapsed = false),
                             onClear: () => ref.read(routeProvider.notifier).clear(),
                           )
                         : RoutePanel(
                             route: route.value!,
+                            showBarriers: ref.watch(routeBarriersEnabledProvider),
                             onClose: () => setState(() {
                               _routeCollapsed = true;
                               _selected = null;
                             }),
+                            onCycleStart: _cycleStart,
+                            onClearManualStart:
+                                hasManualStart ? _clearManualStart : null,
                           ),
                   )
                 else if (_selected != null)
@@ -241,21 +539,148 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       place: _selected!,
                       onClose: () => setState(() => _selected = null),
                       onRoute: () => _planRoute(_selected!),
+                      onClearStart: _clearManualStart,
                     ),
                   ),
               ],
             ),
+      ),
     );
   }
 }
 
-class _FloatingSearchIsland extends ConsumerWidget {
+class _FloatingSearchIsland extends ConsumerStatefulWidget {
   const _FloatingSearchIsland({required this.onSubmitted});
 
   final ValueChanged<Place>? onSubmitted;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_FloatingSearchIsland> createState() =>
+      _FloatingSearchIslandState();
+}
+
+class _FloatingSearchIslandState extends ConsumerState<_FloatingSearchIsland> {
+  final _controller = TextEditingController();
+  late final _focus = FocusNode(onKeyEvent: _onKey);
+  final _portal = OverlayPortalController();
+  final _link = LayerLink();
+  int _highlight = -1;
+  bool _dismissed = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  bool get _open =>
+      !_dismissed && _controller.text.trim().isNotEmpty && _focus.hasFocus;
+
+  void _sync() {
+    if (_open) {
+      _portal.show();
+    } else {
+      _portal.hide();
+    }
+  }
+
+  void _choose(Place place) {
+    _controller.text = place.name;
+    _controller.selection =
+        TextSelection.collapsed(offset: place.name.length);
+    ref
+        .read(placeFiltersProvider.notifier)
+        .update((f) => f.copyWith(query: place.name));
+    setState(() {
+      _dismissed = true;
+      _highlight = -1;
+    });
+    _sync();
+    widget.onSubmitted?.call(place);
+  }
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    if (!_open) return KeyEventResult.ignored;
+    final items = ref.read(searchSuggestionsProvider);
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.escape) {
+      setState(() => _dismissed = true);
+      _sync();
+      return KeyEventResult.handled;
+    }
+    if (items.isEmpty) return KeyEventResult.ignored;
+    if (key == LogicalKeyboardKey.arrowDown) {
+      setState(() => _highlight = (_highlight + 1) % items.length);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowUp) {
+      setState(() => _highlight =
+          _highlight <= 0 ? items.length - 1 : _highlight - 1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
+      _choose(items[_highlight.clamp(0, items.length - 1)]);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  Widget _dropdown(BuildContext context, double width) {
+    final items = ref.watch(searchSuggestionsProvider);
+    return CompositedTransformFollower(
+      link: _link,
+      targetAnchor: Alignment.bottomLeft,
+      offset: const Offset(0, 6),
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: SizedBox(
+          width: width,
+          child: Semantics(
+            container: true,
+            explicitChildNodes: true,
+            label: items.isEmpty
+                ? 'Podpowiedzi wyszukiwania: brak wyników'
+                : 'Podpowiedzi wyszukiwania: ${items.length}',
+            child: Material(
+              color: AppColors.surfaceElevated,
+              elevation: 8,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: AppColors.border),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: items.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text('Brak wyników',
+                          style: TextStyle(color: AppColors.textMuted)),
+                    )
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (var i = 0; i < items.length; i++)
+                          _SuggestionRow(
+                            place: items[i],
+                            highlighted: i == _highlight,
+                            onTap: () => _choose(items[i]),
+                          ),
+                      ],
+                    ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final onSubmitted = widget.onSubmitted;
     final filters = ref.watch(placeFiltersProvider);
     final notifier = ref.read(placeFiltersProvider.notifier);
 
@@ -281,6 +706,24 @@ class _FloatingSearchIsland extends ConsumerWidget {
           ),
         );
 
+    return CompositedTransformTarget(
+      link: _link,
+      child: LayoutBuilder(
+        builder: (context, box) => OverlayPortal(
+          controller: _portal,
+          overlayChildBuilder: (context) => _dropdown(context, box.maxWidth),
+          child: _island(filters, chip, notifier, onSubmitted),
+        ),
+      ),
+    );
+  }
+
+  Widget _island(
+    PlaceFilters filters,
+    Widget Function(String, IconData, bool, PlaceFilters Function(PlaceFilters, bool)) chip,
+    PlaceFiltersNotifier notifier,
+    ValueChanged<Place>? onSubmitted,
+  ) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(24),
       child: BackdropFilter(
@@ -309,6 +752,16 @@ class _FloatingSearchIsland extends ConsumerWidget {
                   const SizedBox(width: 10),
                   Expanded(
                     child: TextField(
+                      controller: _controller,
+                      focusNode: _focus,
+                      onTapOutside: (_) {
+                        _focus.unfocus();
+                        _sync();
+                      },
+                      onTap: () {
+                        setState(() => _dismissed = false);
+                        _sync();
+                      },
                       decoration: const InputDecoration(
                         hintText: 'Gdzie chcesz iść? Szukaj w Krakowie...',
                         hintStyle: TextStyle(color: AppColors.textDim, fontSize: 14),
@@ -320,45 +773,23 @@ class _FloatingSearchIsland extends ConsumerWidget {
                       ),
                       style: const TextStyle(fontSize: 14, color: AppColors.text),
                       textInputAction: TextInputAction.search,
-                      onChanged: (q) => notifier.update((f) => f.copyWith(query: q)),
+                      onChanged: (q) {
+                        notifier.update((f) => f.copyWith(query: q));
+                        setState(() {
+                          _dismissed = false;
+                          _highlight = -1;
+                        });
+                        _sync();
+                      },
                       onSubmitted: (_) {
+                        final items = ref.read(searchSuggestionsProvider);
+                        if (items.isNotEmpty) {
+                          _choose(items[_highlight.clamp(0, items.length - 1)]);
+                          return;
+                        }
                         final first = ref.read(filteredPlacesProvider).value?.firstOrNull;
                         if (first != null) onSubmitted?.call(first);
                       },
-                    ),
-                  ),
-                  // Crowd status indicator (Live crowd HUD)
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: AppColors.mint100,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: AppColors.mint300),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 7,
-                          height: 7,
-                          decoration: const BoxDecoration(
-                            color: AppColors.primary,
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(color: AppColors.primary, blurRadius: 6),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        const Text(
-                          'Ruch: Mały',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ],
                     ),
                   ),
                 ],
@@ -375,9 +806,77 @@ class _FloatingSearchIsland extends ConsumerWidget {
                         (f, v) => f.copyWith(toilet: v)),
                     chip('Ławki', Icons.chair_rounded, filters.benches,
                         (f, v) => f.copyWith(benches: v)),
+                    chip('Unikaj tłumów', Icons.groups_rounded, filters.avoidCrowds,
+                        (f, v) => f.copyWith(avoidCrowds: v)),
                   ],
                 ),
               ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SuggestionRow extends ConsumerWidget {
+  const _SuggestionRow({
+    required this.place,
+    required this.highlighted,
+    required this.onTap,
+  });
+
+  final Place place;
+  final bool highlighted;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final match = ref.watch(placeMatchProvider(place));
+    final text = Theme.of(context).textTheme;
+    return Semantics(
+      button: true,
+      selected: highlighted,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          color: highlighted ? AppColors.mint100 : null,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              Icon(place.category.icon, color: AppColors.primary, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 3,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(place.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: text.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.text)),
+                    if (place.address != null)
+                      Text(place.address!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: text.bodySmall
+                              ?.copyWith(color: AppColors.textMuted)),
+                  ],
+                ),
+              ),
+              if (match != null) ...[
+                const SizedBox(width: 8),
+                Flexible(
+                  flex: 2,
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerRight,
+                    child: StatusChip(match.verdict.style, dense: true),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -394,6 +893,9 @@ class _GlassMapButton extends StatelessWidget {
     this.isLoading = false,
   });
 
+  static const double size = 52;
+  static const double radius = 16;
+
   final IconData icon;
   final String tooltip;
   final VoidCallback? onPressed;
@@ -401,35 +903,40 @@ class _GlassMapButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-        child: Material(
-          color: AppColors.surfaceGlass,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: const BorderSide(color: AppColors.border, width: 1.2),
-          ),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(16),
-            onTap: onPressed,
-            child: SizedBox(
-              width: 44,
-              height: 44,
-              child: Tooltip(
-                message: tooltip,
-                child: Center(
-                  child: isLoading
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: AppColors.primary,
-                          ),
-                        )
-                      : Icon(icon, color: AppColors.primary, size: 22),
+    return Semantics(
+      button: true,
+      label: tooltip,
+      excludeSemantics: true,
+      onTap: onPressed,
+      child: SizedBox.square(
+        dimension: size,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(radius),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+            child: Material(
+              color: AppColors.surfaceGlass,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(radius),
+                side: const BorderSide(color: AppColors.border, width: 1.2),
+              ),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(radius),
+                onTap: onPressed,
+                child: Tooltip(
+                  message: tooltip,
+                  child: Center(
+                    child: isLoading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppColors.primary,
+                            ),
+                          )
+                        : Icon(icon, color: AppColors.primary, size: 24),
+                  ),
                 ),
               ),
             ),
@@ -440,37 +947,56 @@ class _GlassMapButton extends StatelessWidget {
   }
 }
 
+/// Kraków city bbox (SW 49.967,19.792 / NE 50.126,20.217) expanded by ~20 km.
+final krakowMapBounds = LatLngBounds(
+  const LatLng(49.967 - 0.18, 19.792 - 0.28),
+  const LatLng(50.126 + 0.18, 20.217 + 0.28),
+);
+
 class _PlacesMap extends ConsumerWidget {
   const _PlacesMap({
     required this.controller,
     required this.style,
-    required this.myLocation,
     required this.selected,
     required this.onSelect,
     required this.onTapMap,
+    required this.onLongPressMap,
+    this.onCameraChanged,
+    this.onSpawnTap,
+    this.crowd = const [],
   });
 
+  final ValueChanged<MapCamera>? onCameraChanged;
+  final ValueChanged<SpawnDistance>? onSpawnTap;
+  final List<CrowdCell> crowd;
   final MapController controller;
   final _MapStyle style;
-  final LatLng? myLocation;
   final Place? selected;
   final ValueChanged<Place> onSelect;
   final VoidCallback onTapMap;
+  final ValueChanged<LatLng> onLongPressMap;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final places = ref.watch(filteredPlacesProvider).value ?? const [];
-    final routePoints =
-        ref.watch(routeProvider).value?.points ?? const <LatLng>[];
+    final location = ref.watch(userLocationProvider);
+    final myLocation = location?.point;
+    final manualStart = ref.watch(manualStartProvider);
 
     return FlutterMap(
       mapController: controller,
       options: MapOptions(
         initialCenter: _krakowCenter,
         initialZoom: 14.5,
-        minZoom: 11,
+        minZoom: 10,
         maxZoom: 19,
+        // Panning limited to ~20 km beyond Kraków's boundary.
+        cameraConstraint: CameraConstraint.containCenter(bounds: krakowMapBounds),
         onTap: (_, _) => onTapMap(),
+        onLongPress: (_, point) => onLongPressMap(point),
+        onPositionChanged: onCameraChanged == null
+            ? null
+            : (camera, _) => onCameraChanged!(camera),
       ),
       children: [
         // 1. Map Tiles
@@ -491,34 +1017,29 @@ class _PlacesMap extends ConsumerWidget {
             tileProvider: kIsWeb ? _PlainWebTileProvider() : NetworkTileProvider(),
           ),
 
-        // 2. Planned accessible route (ORS or labelled demo)
-        if (routePoints.length > 1)
-        PolylineLayer(
-          polylines: [
-            // Outer glow line
-            Polyline(
-              points: routePoints,
-              strokeWidth: 8.0,
-              color: AppColors.primary.withValues(alpha: 0.35),
-              strokeCap: StrokeCap.round,
-              strokeJoin: StrokeJoin.round,
-            ),
-            // Inner crisp core line
-            Polyline(
-              points: routePoints,
-              strokeWidth: 3.5,
-              color: AppColors.primaryBright,
-              strokeCap: StrokeCap.round,
-              strokeJoin: StrokeJoin.round,
-            ),
-          ],
-        ),
+        // Crowd layer: soft cloud over the 100 m honeycomb, no borders.
+        if (crowd.isNotEmpty) CrowdCloudLayer(cells: crowd),
 
-        // 3. User Location Marker
+        // 2. Planned accessible route (ORS or labelled demo)
+        //    walking line, barrier spans in red, or accessible alternative
+        const RouteLayer(),
+
+        // 3. User location: accuracy circle + dot
+        if (location != null && location.accuracyM > 0)
+          CircleLayer(circles: [
+            CircleMarker(
+              point: location.point,
+              radius: location.accuracyM,
+              useRadiusInMeter: true,
+              color: AppColors.accentCyan.withValues(alpha: 0.12),
+              borderColor: AppColors.accentCyan.withValues(alpha: 0.5),
+              borderStrokeWidth: 1.5,
+            ),
+          ]),
         if (myLocation != null)
           MarkerLayer(markers: [
             Marker(
-              point: myLocation!,
+              point: myLocation,
               width: 32,
               height: 32,
               child: Semantics(
@@ -544,6 +1065,74 @@ class _PlacesMap extends ConsumerWidget {
             ),
           ]),
 
+        if (location != null && location.accuracyM > warnAccuracyM)
+          MarkerLayer(markers: [
+            Marker(
+              point: location.point,
+              width: 200,
+              height: 28,
+              alignment: const Alignment(0, -3),
+              child: Semantics(
+                label: 'Lokalizacja niedokładna '
+                    '(${formatAccuracy(location.accuracyM)})',
+                child: Center(
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceGlass,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.warn),
+                    ),
+                    child: ExcludeSemantics(
+                      child: Text(
+                        'Niedokładna ${formatAccuracy(location.accuracyM)}',
+                        style: const TextStyle(
+                            color: AppColors.warn,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ]),
+        if (manualStart != null)
+          MarkerLayer(markers: [
+            Marker(
+              point: manualStart,
+              width: 64,
+              height: 48,
+              alignment: Alignment.topCenter,
+              child: Semantics(
+                label: 'Punkt startowy trasy',
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const ExcludeSemantics(
+                        child: Text('Start',
+                            style: TextStyle(
+                                color: Color(0xFF090D12),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800)),
+                      ),
+                    ),
+                    const Icon(Icons.flag_rounded,
+                        color: AppColors.primary, size: 24),
+                  ],
+                ),
+              ),
+            ),
+          ]),
+
         // 4. Place Markers with Accessibility Badges
         MarkerLayer(
           markers: [
@@ -561,7 +1150,10 @@ class _PlacesMap extends ConsumerWidget {
           ],
         ),
 
-        // 5. Attribution
+        // 5. Creatures to catch (spawns)
+        SpawnMarkerLayer(onTap: (d) => onSpawnTap?.call(d)),
+
+        // 6. Attribution
         RichAttributionWidget(
           alignment: AttributionAlignment.bottomLeft,
           attributions: [
@@ -656,16 +1248,40 @@ class _PlacePreview extends ConsumerWidget {
     required this.place,
     required this.onClose,
     required this.onRoute,
+    required this.onClearStart,
   });
 
   final Place place;
   final VoidCallback onClose;
   final VoidCallback onRoute;
+  final VoidCallback onClearStart;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final match = ref.watch(placeMatchProvider(place));
+    final filters = ref.watch(placeFiltersProvider);
+    final hasManualStart = ref.watch(manualStartProvider) != null;
     final text = Theme.of(context).textTheme;
+    // Toilet / bench info appears in the preview only when its chip is on
+    // (the full detail screen always shows everything).
+    bool amenityVisible(Feature f) => switch (f) {
+          Feature.toilet => filters.toilet,
+          Feature.bench => filters.benches,
+          _ => true,
+        };
+    final problems = match?.problems
+            .where((c) => amenityVisible(c.feature))
+            .toList() ??
+        const [];
+    bool hasFlag(Feature f) => place.factsFor(f).any((x) => x.flag == true);
+    final amenities = [
+      if (filters.toilet)
+        (Icons.wc_rounded,
+            hasFlag(Feature.toilet) ? 'Toaleta dostępna' : 'Brak danych o toalecie'),
+      if (filters.benches)
+        (Icons.chair_rounded,
+            hasFlag(Feature.bench) ? 'Ławki w pobliżu' : 'Brak danych o ławkach'),
+    ];
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(24),
@@ -739,13 +1355,44 @@ class _PlacePreview extends ConsumerWidget {
                   if (place.isDemo) const DemoBadge(),
                 ],
               ),
-              if (match != null && match.problems.isNotEmpty) ...[
+              for (final (icon, label) in amenities) ...[
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(icon, size: 16, color: AppColors.primary),
+                    const SizedBox(width: 6),
+                    Text(label,
+                        style: text.bodySmall?.copyWith(color: AppColors.text)),
+                  ],
+                ),
+              ],
+              if (problems.isNotEmpty) ...[
                 const SizedBox(height: 8),
                 Text(
-                  match.problems
+                  problems
                       .map((c) => '${c.feature.label}: ${c.status.style.label.toLowerCase()}')
                       .join(' · '),
                   style: text.bodySmall?.copyWith(color: AppColors.bad),
+                ),
+              ],
+              if (hasManualStart) ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    const Icon(Icons.flag_rounded,
+                        size: 16, color: AppColors.primary),
+                    const SizedBox(width: 6),
+                    Text('Start: wybrany punkt',
+                        style: text.bodySmall?.copyWith(color: AppColors.text)),
+                    const Text(' · '),
+                    TextButton(
+                      onPressed: onClearStart,
+                      style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          minimumSize: const Size(48, 32)),
+                      child: const Text('Usuń'),
+                    ),
+                  ],
                 ),
               ],
               const SizedBox(height: 14),
@@ -756,6 +1403,7 @@ class _PlacePreview extends ConsumerWidget {
                       onPressed: onRoute,
                       style: OutlinedButton.styleFrom(
                         minimumSize: const Size.fromHeight(48),
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
                         foregroundColor: AppColors.primary,
                         side: const BorderSide(color: AppColors.primary),
                       ),
@@ -828,3 +1476,4 @@ enum _MapStyle {
   final bool retina;
   final int maxNativeZoom;
 }
+

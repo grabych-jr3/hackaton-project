@@ -55,13 +55,12 @@ void main() {
   setUpAll(() => GoogleFonts.config.allowRuntimeFetching = false);
   setUp(() => now = DateTime(2026, 10, 3, 12));
 
-  testWidgets('catch: survey catches a creature and adds points', (tester) async {
+  testWidgets('catch: survey catches a creature without adding points', (tester) async {
     SharedPreferences.setMockInitialValues({});
     await pumpScreen(tester, const CatchScreen());
 
     expect(find.text('DANE PRZYKŁADOWE'), findsWidgets);
-    await tester.tap(find.text('Ankieta'));
-    await tester.pumpAndSettle();
+    expect(find.text('Zgłoszenia i ankieta'), findsOneWidget);
     expect(find.text('Saldo: 120 pkt'), findsOneWidget);
     final send = find.ancestor(of: find.text('Wyślij zgłoszenie i złap'), matching: find.bySubtype<FilledButton>());
     await tester.scrollUntilVisible(find.text('Wyślij zgłoszenie i złap'), 200, scrollable: find.byType(Scrollable).first);
@@ -75,9 +74,10 @@ void main() {
 
     expect(find.textContaining('Złapano:'), findsOneWidget);
     expect(find.textContaining('Zgłoszenie niezweryfikowane'), findsOneWidget);
-    await tester.tap(find.text('Odbierz punkty'));
+    expect(find.textContaining('sprzedaj w Kolekcji'), findsOneWidget);
+    await tester.tap(find.text('Do kolekcji'));
     await tester.pumpAndSettle();
-    expect(find.text('Saldo: 120 pkt'), findsNothing);
+    expect(find.textContaining('Złapano:'), findsNothing);
   });
 
   testWidgets('collection: locked and caught species, city progress', (tester) async {
@@ -86,12 +86,80 @@ void main() {
     });
     await pumpScreen(tester, const CollectionScreen());
 
-    expect(find.text('Smok'), findsOneWidget);
+    expect(find.text('Smok Wawelski'), findsOneWidget);
     expect(find.text('×2'), findsOneWidget);
-    expect(find.text('???'), findsNWidgets(7));
-    expect(find.text('Odkryto 1/8'), findsOneWidget);
+    expect(find.text('???'), findsNWidgets(9));
+    expect(find.text('Odkryto 1/10'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('Nowa Huta'), 200, scrollable: find.byType(Scrollable).first);
     expect(find.text('Odkryte miasto'), findsOneWidget);
+  });
+
+  testWidgets('collection: sell sheet changes quantity and updates balance', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'game_state':
+          jsonEncode(const GameState(points: 10, caught: {'sowa': 3}).toJson()),
+    });
+    await pumpScreen(tester, const CollectionScreen());
+
+    expect(find.text('Saldo: 10 pkt'), findsOneWidget);
+    expect(find.text('Sprzedaj · 25 pkt'), findsOneWidget);
+    expect(find.bySemanticsLabel('Motylosmok, rzadki, posiadasz 3, wartość 25 punktów'),
+        findsOneWidget);
+
+    await tester.tap(find.text('Motylosmok'));
+    await tester.pumpAndSettle();
+    expect(find.text('Sprzedaj (1) za 25 pkt'), findsOneWidget);
+    expect(find.textContaining('Collegium Maius'), findsOneWidget);
+    await tester.tap(find.byTooltip('Zwiększ liczbę'));
+    await tester.pump();
+    expect(find.text('Sprzedaj (2) za 50 pkt'), findsOneWidget);
+    await tester.tap(find.byTooltip('Zwiększ liczbę'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Zmniejsz liczbę'));
+    await tester.pump();
+
+    await tester.tap(find.text('Sprzedaj (2) za 50 pkt'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Potwierdź'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sprzedano 2 × Motylosmok za 50 pkt'), findsOneWidget);
+    expect(find.text('Saldo: 60 pkt'), findsOneWidget);
+    expect(find.text('×1'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('collection: locked species are not sellable', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await pumpScreen(tester, const CollectionScreen());
+    expect(find.textContaining('Sprzedaj'), findsNothing);
+    await tester.tap(find.text('???').first);
+    await tester.pumpAndSettle();
+    expect(find.byType(BottomSheet), findsNothing);
+  });
+
+  testWidgets('collection: sold-out species shown in grayscale, owned in color', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'game_state': jsonEncode(
+          const GameState(points: 0, caught: {'smok': 0, 'sowa': 2}).toJson()),
+    });
+    await pumpScreen(tester, const CollectionScreen());
+
+    expect(find.text('sprzedane'), findsOneWidget);
+    final smok = find.ancestor(of: find.text('Smok Wawelski'), matching: find.byType(Column)).first;
+    expect(find.descendant(of: smok, matching: find.byType(Grayscale)), findsOneWidget);
+    expect(find.descendant(of: smok, matching: find.byType(ColorFiltered)), findsOneWidget);
+    final sowa = find.ancestor(of: find.text('Motylosmok'), matching: find.byType(Column)).first;
+    expect(find.descendant(of: sowa, matching: find.byType(ColorFiltered)), findsNothing);
+    expect(find.byType(Grayscale), findsOneWidget);
+    expect(find.bySemanticsLabel('Smok Wawelski, legendarny, sprzedany, brak w kolekcji'), findsOneWidget);
+
+    await tester.tap(find.text('Smok Wawelski'));
+    await tester.pumpAndSettle();
+    expect(find.text('Nie masz już tego stworka — złap go ponownie'), findsOneWidget);
+    expect(find.descendant(of: find.byType(BottomSheet), matching: find.byType(Grayscale)),
+        findsOneWidget);
+    expect(find.textContaining('Sprzedaj ('), findsNothing);
   });
 
   testWidgets('rewards: activate voucher, countdown, expiry', (tester) async {

@@ -313,7 +313,8 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
   "sources": { "osm": { "lastSuccessAt": "2026-10-03T05:00:00Z", "stale": false } }
 }
 ```
-Не больше 500 мест на ответ. Факты встраиваются целиком: на одно место их ~5–10.
+**Курированная выборка** (и без `bbox`, и с ним): не больше `limit` мест (по умолчанию 50 — `PLACES_LIMIT` / `app.places.limit`; `?limit=` 1..200).
+Алгоритм (`PlaceSelector`): один SQL ранжирует места и берёт топ-500 кандидатов — сначала все демо-места (`is_demo`), затем OSM-места с фактами доступности, затем по категории (attraction/museum/church/park > bridge > cafe/restaurant), числу фактов, наличию названия, `id`. Затем жадный проход в Java: место добавляется, только если оно ≥ 300 м от уже выбранных (демо-места добавляются всегда) — так ~50 точек распределяются по всему городу. Порядок детерминирован. Факты встраиваются целиком: на одно место их ~5–10.
 
 `GET /places/{id}` — то же, но одно место (`404`, если не найдено).
 
@@ -335,35 +336,76 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
 ```json
 {
   "points": [ { "lat": 50.0617, "lng": 19.9373 }, { "lat": 50.0541, "lng": 19.9354 } ],
-  "profile": { "maxKerbCm": 3, "minWidthCm": 80, "maxInclinePct": 6 },
+  "profile": { "maxSteps": 0, "maxKerbCm": 3, "minWidthCm": 80, "maxInclinePct": 6 },
   "avoidCrowds": true,
   "optimizeOrder": false
 }
 ```
-Сервер вызывает `POST https://api.openrouteservice.org/v2/directions/wheelchair/geojson` с телом:
+`maxSteps`: `0` — никаких ступеней (коляска), `>0` — пара ступеней допустима (детская коляска), не задан — как 0. `minWidthCm` по умолчанию 75.
+
+**Логика (продуктовое правило: по умолчанию — обычный пешеходный маршрут, недоступные участки красным, доступная альтернатива рядом):**
+1. **Основной маршрут** — `POST /v2/directions/foot-walking/geojson` (без restrictions).
+2. По `extras` основного маршрута строятся `barriers` — диапазоны индексов его `geometry`, непроходимые для профиля.
+3. Если `barriers` не пуст — дополнительно считается **альтернатива** `POST /v2/directions/wheelchair/geojson` с restrictions; у альтернативы тоже вычисляются собственные `barriers`. Если ORS не нашёл маршрут (коды 2004/2009/2010/2099) или альтернатива всё ещё с барьерами — пробуются смещённые точки назначения (`RouteService.DEST_OFFSETS_M`, 40–85 м вокруг цели; первая без барьеров побеждает) и в альтернативу добавляется `"note": "Brak trasy bez barier do samego celu — ostatnie N m może wymagać pomocy"` (если конец дальше 15 м от цели). Иначе — один повтор **без** `profile_params.restrictions` → альтернатива с `"relaxed": true, "accessible": false` и `note`. Если и это не удалось — `"alternative": null`, а у основного маршрута `note` с объяснением. Пример: Stara Synagoga (50.0514,19.9485) — точная цель привязывается к изолированному куску графа wheelchair (ORS 2009 даже без restrictions), смещение на 40 м к северу даёт маршрут.
+   Клиент показывает барьеры, альтернативу и `note` только при включённом чипе «Pasujące do mnie».
+4. Если не удался основной маршрут (или нет ключа) — прямая линия с `"fallback": true` и `fallbackReason`.
+
+Тело запроса в ORS (оба профиля):
 ```json
 {
   "coordinates": [[19.9373,50.0617],[19.9354,50.0541]],
+  "radiuses": [-1, -1],
   "instructions": true, "language": "pl", "units": "m",
+  "extra_info": ["steepness", "surface", "waytype"],
   "options": { "profile_params": { "restrictions": {
       "maximum_sloped_kerb": 0.03, "minimum_width": 0.8, "maximum_incline": 6 } } }
 }
 ```
-(ORS принимает бордюр и ширину **в метрах**.)
+(`options` — только для wheelchair. ORS принимает бордюр и ширину **в метрах**. `radiuses: -1` — привязка к ближайшей дороге без ограничения расстояния: без этого точки во дворах/полях дают 2010 «Could not find routable point within a radius of 150 m».)
+
+**Правила `barriers`** (идентификаторы ORS extra_info, проверены на реальном ответе у Вавеля):
+| type | источник | когда барьер | label / detail |
+|---|---|---|---|
+| `steps` | `waytype` = 8 | всегда | `"Schody"` / `null`; при `maxSteps > 0` — `"sprawdź liczbę stopni"` |
+| `steep` | `steepness` класс ±1=1–3 %, ±2=4–6 %, ±3=7–9 %, ±4=10–15 %, ±5=≥16 % | нижняя граница класса > `maxInclinePct` (по умолч. 6) | `"Stromy odcinek"` / `"ok. 2%"`…`"ok. 12%"`, `"ponad 15%"` |
+| `surface` | `surface` 2 unpaved, 5 cobblestone, 8–10 gravel, 11–12 dirt/ground, 13 ice, 15 sand, 16 woodchips, 17 grass, 18 grass paver | только при `maxKerbCm <= 3` (пресет коляски; без профиля — тоже) | `"Nawierzchnia: kostka brukowa"` и т. п. / `null` |
+| `narrow` | — | зарезервирован: ORS extras не дают ширину, сейчас не выдаётся | |
+
+Соседние/перекрывающиеся диапазоны одного типа сливаются (для `steep` остаётся самый крутой `detail`, для `surface` — только с одинаковым label). Список отсортирован по `fromIndex`.
+Те же extras дают `segments[].warning` (польский текст, напр. `"Schody"`, `"Stromy odcinek (ok. 8%)"`, `"Nawierzchnia: kostka brukowa"`, несколько через `"; "`), сопоставляя `way_points` шага с диапазонами extras.
+
 Ответ клиенту:
 ```json
 {
-  "distanceM": 1240, "durationS": 1110,
-  "geometry": [[50.0617,19.9373],[50.0612,19.9370]],
+  "profile": "foot-walking",
+  "distanceM": 643.2, "durationS": 463.1,
+  "geometry": [[50.0560,19.9340],[50.0559,19.9341]],
   "segments": [
-    { "instruction": "Skręć w lewo w Grodzką", "distanceM": 320, "warnings": [] }
+    { "instruction": "Skręć w lewo na Podzamcze", "distanceM": 120, "warning": "Schody" }
   ],
   "order": [0, 1],
   "source": "openrouteservice",
-  "fallback": false
+  "fallback": false,
+  "relaxed": false,
+  "fallbackReason": null,
+  "barriers": [
+    { "fromIndex": 12, "toIndex": 13, "type": "steps", "label": "Schody", "detail": null },
+    { "fromIndex": 25, "toIndex": 41, "type": "steep", "label": "Stromy odcinek", "detail": "ponad 15%" }
+  ],
+  "accessible": false,
+  "alternative": {
+    "profile": "wheelchair", "distanceM": 910, "durationS": 700, "geometry": [[50.0560,19.9340]], "segments": [],
+    "order": [0, 1], "source": "openrouteservice", "fallback": false, "relaxed": false, "fallbackReason": null,
+    "barriers": [], "accessible": true, "alternative": null
+  }
 }
 ```
-Если ORS недоступен, сервер возвращает прямую линию между точками с `"fallback": true`, а UI показывает предупреждение. Ответы кэшируются на 10 мин по хэшу запроса: у бесплатного ключа ~2000 запросов в сутки.
+- `accessible` = `barriers` пуст и данные есть. У альтернативы `barriers` всегда `[]`, `accessible` = `!relaxed`.
+- `relaxed` (bool, по умолч. false) — маршрут построен без ограничений профиля; UI должен предупредить.
+- `fallbackReason` (string|null) — при `fallback: true`, по-польски, напр. `"Brak klucza OpenRouteService"`, `"OpenRouteService: nie znaleziono trasy (kod 2009) - Route could not be found …"`, `"OpenRouteService: usługa niedostępna"`.
+- Fallback: прямая линия, `"source": "straight-line"`, `"barriers": []`, `"accessible": false`, `"alternative": null` — клиент показывает «Brak danych o dostępności trasy».
+
+Ошибки ORS логируются WARN (профиль ORS, код, HTTP-статус) — без ключа, координат и порогов профиля. Ответы (кроме fallback) кэшируются на 10 мин по запросу: у бесплатного ключа ~2000 запросов в сутки.
 Профиль нигде не сохраняется и не логируется.
 
 ### 5.5 Толпы (P1)
@@ -387,37 +429,76 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
 Квадраты, где меньше 3 пользователей, не раскрывают `live` (приватность).
 
 ### 5.6 Игра: спавн и улов (P1)
-`GET /spawns?bbox=…`
+`GET /api/v1/spawns?bbox=minLng,minLat,maxLng,maxLat` (публичный; `bbox` необязателен → все активные; с токеном заполняется `caughtByMe`) → голый массив:
 ```json
-{ "spawns": [ { "id": "…", "lat": 50.06, "lng": 19.94, "species": "smok",
-                "rarity": "epic", "expiresAt": "…" } ] }
+[ { "id": "…", "lat": 50.0532, "lng": 19.934, "speciesId": "smok", "name": "Smok", "emoji": "🐉",
+    "rarity": "legendary", "expiresAt": "2026-11-03T12:00:00Z", "kind": "seed", "caughtByMe": false } ]
 ```
+- `kind`: `seed` (демо-спавны), `user` (созданы через `/spawns/here`), `auto` (резерв). Возвращаются только `expiresAt > now`.
+- `name`/`emoji`/`rarity` берутся из каталога `game/game.json`. Неверный `bbox` → `400`.
 
-`POST /catches` — `multipart/form-data`:
+**Демо-спавны (`kind = 'seed'`)** — `SpawnService.SEEDS` (14 шт. вокруг центра: Rynek, Sukiennice, Mariacka, Collegium Maius, Planty, Barbakan, Wawel (Smok, единственный legendary), Bulwary, Kazimierz, Kładka Bernatka, Podgórze, Muzeum Narodowe, Massolit, Schindler). `@Scheduled` при старте и каждые 10 мин делает upsert по `seed_key`: создаёт недостающие и продлевает `expires_at = now + 30 дней` — демо никогда не пустеет.
+
+`POST /api/v1/spawns/here` (auth) `{ "lat": 50.06, "lng": 19.93, "speciesId": "sowa" }` → `201` + объект спавна (как выше). Точка привязывается к улице (см. ниже), в ответе — уже скорректированные `lat`/`lng`; `kind = 'user'`, живёт 2 ч; без `speciesId` — случайный common/rare; неизвестный `speciesId` → `400`. Не более 3 активных user-спавнов на пользователя: самый старый истекает (`expires_at = now`). Нужен для теста AR-камеры на месте.
+
+**Спавны не внутри зданий (`SpawnSnapper`).** Каждая точка спавна (`/spawns/here` и демо-сиды) проходит цепочку:
+1. ORS Snap `POST /v2/snap/foot-walking/json` `{"locations":[[lng,lat]],"radius":60}` → ближайшая точка пешеходного графа; берётся, если `snapped_distance ≤ 60 м` (нужен `ORS_API_KEY`).
+2. Если ORS недоступен/нет ключа — Overpass (зеркала `app.overpass.urls` или дефолтный список, таймаут 5 с): `way["building"](around:15)` + `way["highway"~"footway|pedestrian|path|living_street|residential|service"](around:60)`; если точка внутри полигона здания — переносится на ближайшую точку ближайшей дороги/тротуара (≤ 60 м).
+3. Если всё упало — исходная точка.
+
+Сиды снапаются один раз и кешируются в таблице `spawn_seed_snap(seed_key, orig_lat, orig_lng, lat, lng, method, snapped_at)` (V6); пересчёт — только если исходные координаты сида в коде поменялись. Неудачный снап (`original`) не кешируется и повторяется при следующем refresh.
+
+**Поимка спавна:** если у catch есть `spawnId` и анализ `OK` — пользователь получает **вид этого спавна** (не бросок по severity), спавн помечается пойманным (`spawn_catch(user_id, spawn_id)` → `caughtByMe: true`). Спавн не исчезает — его могут поймать и другие. Без `spawnId` — прежнее поведение.
+
+Таблицы (V4): `creature_spawn` + `kind`, `seed_key` (unique), `created_by`, `created_at`; `spawn_catch(user_id, spawn_id, caught_at)`.
+
+`POST /catches` (auth) — `multipart/form-data`:
 | часть | тип | обязательна |
 |---|---|---|
-| photo | image/jpeg, ≤ 3 МБ (клиент сжимает до ~1280 px) | да |
+| photo | JPEG или PNG (проверка по сигнатуре), ≤ 5 МБ (клиент сжимает до ~1280 px) | да |
 | lat, lng | double | да |
-| spawnId | uuid | нет |
+| takenAt | ISO-8601 UTC | да |
+| spawnId | uuid | нет (из `GET /spawns`) |
 | placeId | string | нет |
-| takenAt | ISO-8601 | да |
 
 Проверки до отправки в Kafka:
-- `spawnId` существует и не истёк;
-- расстояние до спавна ≤ 50 м;
-- `takenAt` не старше 10 мин;
-- лимит 30 фото в сутки на пользователя.
+- `takenAt` не старше 10 мин (и не более 2 мин в будущем) → `400`;
+- размер > 5 МБ → `413 PAYLOAD_TOO_LARGE`; не JPEG/PNG → `400`;
+- если передан `spawnId`: существует (`404`), не истёк (`410 SPAWN_EXPIRED`), расстояние ≤ 80 м (`400`, допуск на шум GPS); без `spawnId` проверки расстояния нет;
+- `placeId` (если есть) существует → иначе `404`;
+- лимит 30 фото в сутки на пользователя → `429`.
 
-Ответ `202 { "catchId": "…", "status": "PENDING" }`.
+Ответ `202 { "catchId": "…", "status": "PENDING", "createdAt": "2026-10-04T10:00:00Z", "thumbnailUrl": "/catches/{id}/photo" }`.
+Фото сохраняется сразу, анализ идёт в фоне — приложение не блокирует пользователя, результаты забирает через `GET /catches?since=…`.
 
-`GET /catches/{id}` — Flutter опрашивает раз в 1–2 с:
+`GET /catches/{id}` (auth, только владелец, чужой → `404`) — Flutter опрашивает раз в 1–2 с:
 ```json
-{ "catchId": "…", "status": "OK", "points": 60, "rarity": "epic",
-  "result": { "steps": 4, "kerbRange": ">7", "widthRange": null, "ramp": false,
-              "handrail": true, "obstacles": ["kostka"], "difficulty": 7.4,
-              "confidence": 0.82 },
-  "createdFacts": ["6a0e…"] }
+{ "catchId": "…", "status": "OK", "reason": null,
+  "result": { "steps": 5, "kerbRange": null, "widthRange": null, "ramp": false,
+              "handrail": false, "obstacles": [], "difficulty": 10.0, "confidence": 1.0 },
+  "species": { "id": "niedzwiedz", "name": "Lawowa Salamandra", "emoji": "🔥", "rarity": "epic" },
+  "points": 60, "awarded": 0,
+  "state": { "points": 120, "caught": { "niedzwiedz": 1 }, "vouchers": [] },
+  "createdFacts": [] }
 ```
+- `status`: `PENDING` / `OK` / `REJECTED` / `FAILED`; `reason` — польский текст для пользователя при `REJECTED`/`FAILED`.
+- `species`, `points` (= `sellValue` вида), `state` (как `GET /game/state`) — только при `OK`, иначе `null`. `awarded` всегда 0.
+- **Поимка по фото очков не даёт** (как `/game/reports`): +1 в `user_species`, очки — только через `POST /game/sell`.
+
+`GET /catches?since=<ISO>&limit=20` (auth) — мои уловы, новые сверху (`created_at DESC`), `limit` 1…100 (по умолчанию 20). Ответ — JSON-массив:
+```json
+[ { "catchId": "…", "status": "OK", "reason": null,
+    "species": { "id": "kerbik", "name": "Kerbik", "emoji": "🧱", "rarity": "rare" }, "points": 25,
+    "result": { "steps": 3, "…": "…" },
+    "createdAt": "2026-10-04T10:00:00Z", "analyzedAt": "2026-10-04T10:00:05Z",
+    "placeId": "osm:node/1", "thumbnailUrl": "/catches/…/photo" } ]
+```
+- без `since` — все (до `limit`); с `since` — только `analyzedAt > since` **или** `status = PENDING` (опрос «что завершилось с прошлой проверки»: клиент хранит время последнего опроса).
+- `species`/`points`/`result` — `null`, пока не `OK` (у `REJECTED`/`FAILED` `result` может быть заполнен).
+
+`GET /catches/{id}/photo` (auth, только владелец, чужой → `404`) — байты сохранённого фото, `Content-Type` `image/jpeg` или `image/png` (по расширению файла), `Cache-Control: private, max-age=86400`. `thumbnailUrl` — относительный путь к нему (префикс `/api/v1` добавляет клиент, нужен `Authorization`).
+
+Таймаут анализа: `@Scheduled` каждые 30 с переводит уловы в `PENDING` дольше 2 мин в `FAILED` с `reason = "Analiza nie powiodła się — spróbuj ponownie"` (vision недоступен). Обновление идёт только `WHERE status = 'PENDING'`, а listener берёт строку `FOR UPDATE` и тоже обрабатывает только `PENDING`, — гонки нет: кто первый, тот и задаёт итоговый статус, поздний `photo.analyzed` игнорируется.
 
 ### 5.7 Профиль, награды (P1)
 `GET /me` → `{ "userId", "points", "catches": 14, "barriersMapped": 23, "exploredCells": 38, "totalCells": 400 }`
@@ -432,7 +513,33 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
 
 `GET /vouchers` — мои ваучеры (активные и истёкшие).
 
+### 5.7a Игра v2: анкета барьера (реализовано, контракт v2)
+Правила — порт `mobile/lib/features/game/game_models.dart` (`GameRules`), случайность на сервере.
+Ошибки: `{ "error": CODE, "code": CODE, "message" }` (клиент читает `code`).
+
+- `GET /game/catalog` (public) → копия `mobile/assets/demo/game.json` (`dataset, isDemo, initialPoints, species[], offers[], districts[]`). У каждого вида есть `sellValue` (common 10, rare 25, epic 60, legendary 150) и польское `description`.
+- `GET /game/state` (auth) → `{ "points": 120, "caught": { "golab": 2 }, "vouchers": [ { "offerId", "code", "activatedAt", "expiresAt" } ] }`. Новый пользователь получает `initialPoints` (120) при первом `/auth/anonymous`.
+- `POST /game/reports` (auth)
+  ```json
+  { "placeId": "wawel", "report": { "placeId": "wawel", "steps": 3, "curb": "high", "passage": "narrow",
+    "noRamp": true, "uneven": false, "obstacles": false } }
+  ```
+  `curb` ∈ none|low|mid|high, `passage` ∈ none|wide|medium|narrow.
+  severity: steps>0 → +1 (≥3 → +2); curb mid +1, high +2; passage medium +1, narrow +2; noRamp +2; uneven +1; obstacles +1.
+  score = severity + random(0..3): ≥10 legendary (150), ≥6 epic (60), ≥3 rare (25), иначе common (10); вид — случайный из этой редкости.
+  Ответ: `{ "species": {id,name,emoji,rarity}, "points": 60, "awarded": 0, "state": GameState }`.
+  **Поимка очков не даёт** (`state.points` не меняется, `caught[speciesId]` +1); `points` = цена продажи этого вида, `awarded` всегда 0.
+  Если есть placeId — создаются факты `source=user` (`sourceRef=report:<id>`): steps>0 → `steps`; curb low/mid/high → `kerbHeight` "0-3"/"3-7"/">7"; passage wide/medium/narrow → `doorWidth` ">90"/"70-90"/"<70"; noRamp → `ramp=false`.
+- `POST /game/sell` (auth) `{ "speciesId": "smok", "count": 1 }` → `{ "earned": 150, "state": GameState }`.
+  earned = count × sellValue(rarity); `caught[speciesId]` уменьшается на count (ключ удаляется при 0); очки — через `points_ledger` (reason `sell`).
+  `400 INVALID_COUNT` (count < 1), `409 NOT_ENOUGH_CREATURES` (count > есть у пользователя), `404 NOT_FOUND` (неизвестный вид).
+- `POST /game/vouchers` (auth) `{ "offerId" }` → `{ "voucher": {offerId,code:"KBB-XXXX",activatedAt,expiresAt}, "state" }`; срок 120 мин.
+  `402 INSUFFICIENT_POINTS`, `403 OFFER_NOT_VERIFIED`, `404 NOT_FOUND`.
+- Маршруты: если в `/routes` нет `profile.minWidthCm`, используется 75 см (0.75 м, `minimum_width` для ORS); поле по-прежнему принимается.
+- Хранение: `user_species`, `game_report`, `game_voucher` (V2), очки — `app_user.points` + `points_ledger`.
+
 ### 5.8 Служебное
+`GET /health` и `GET /api/v1/health` → `{ "status": "UP" }` (public, клиент определяет доступность сервера).
 `GET /health/sources` → содержимое `source_status`. По нему Flutter показывает баннер «Dane z dnia X — źródło chwilowo niedostępne».
 
 ---
@@ -457,21 +564,23 @@ voucher(id uuid, offer_id FK, user_id FK, code varchar, activated_at, expires_at
 { "catchId": "…", "status": "OK",
   "result": { "steps": 4, "kerbRange": ">7", "widthRange": null, "ramp": false,
               "handrail": true, "obstacles": [], "difficulty": 7.4, "confidence": 0.82 },
-  "phash": "c3a1…", "reason": null }
+  "phash": "c3a1…", "reason": null, "model": "gemini-3.7-flash" }
 ```
 `status`: `OK` / `REJECTED` (размытое фото, дубликат, на фото нет барьера) / `FAILED` (ошибка Gemini).
 
-### 6.3 Обработка в central-api (`@KafkaListener`, в одной транзакции)
-1. Найти `catch_record`. Если статус уже не `PENDING`, **выйти** (идемпотентность).
-2. При `OK`:
-   - обновить `ai_result` и `status`;
-   - создать `accessibility_fact` с `source="ai"`, `source_ref="catch:<id>"` (только для непустых полей: `steps` → число, `kerbRange` → строка-диапазон, `ramp` → boolean);
-   - начислить очки через `points_ledger` с `(reason='catch', ref_id=catchId)`;
-   - увеличить `explored_count`.
-3. При `REJECTED`/`FAILED` — статус и `reason`, очки не начисляются.
-4. Если `confidence < 0.5`, очки делятся пополам.
+`model` — необязательное дополнительное поле (обратно совместимо, central-api его игнорирует): какая модель Gemini дала ответ (`null` при `FAILED`/отказе препроцессинга, `"mock"` для MOCK-анализатора). vision-service перебирает модели из `GEMINI_MODELS` (503/429/404/таймаут → следующая модель, не более 2 проходов, ≤ 60 с на фото); если все модели недоступны — `FAILED` с `reason = "AI chwilowo niedostępne — spróbuj ponownie za chwilę"`.
 
-Очки за редкость: common 10, rare 25, epic 60, legendary 150.
+### 6.3 Обработка в central-api (`@KafkaListener`, в одной транзакции)
+1. Найти `catch_record` (`FOR UPDATE`). Если статус уже не `PENDING`, **выйти** (идемпотентность: повтор сообщения ничего не меняет).
+2. При `REJECTED`/`FAILED` — статус и `reason` от vision-service (например «Zdjęcie jest nieostre — zrób ponownie», «Zdjęcie jest zbyt ciemne — zrób ponownie»), существо не выдаётся.
+3. При `OK`:
+   - **дубликат**: pHash с расстоянием Хэмминга ≤ 6 у другого `OK`-улова в радиусе 30 м → `status=REJECTED`, `reason="To miejsce zostało już sfotografowane"`, существо не выдаётся;
+   - если есть `placeId` — `accessibility_fact` с `source="ai"`, `source_ref="catch:<id>"` (только непустые: `steps`, `kerbRange` → `kerbHeight`, `ramp`);
+   - результат ИИ → `BarrierReport` и те же правила, что `/game/reports` (`GameRules`): `steps` → steps; `kerbRange` "0-3"/"3-7"/">7" → curb low/mid/high; `widthRange` "<70"/"70-90"/">90" → passage narrow/medium/wide; `ramp=false` → noRamp; непустой `obstacles` → obstacles; `difficulty ≥ 6` → uneven. severity + random(0..3) → редкость → случайный вид;
+   - `user_species` +1, `catch_record.species_id`, `points=0`; **очки не начисляются** (никаких записей в `points_ledger`);
+   - увеличить `explored_count`.
+
+Хранение: `catch_record.species_id` (миграция V3).
 
 ---
 
@@ -503,7 +612,17 @@ out center tags;
 | `incline=6%` | `incline = 6` |
 
 `fetched_at` = поле `timestamp` элемента OSM, если есть, иначе время импорта.
-Ошибка или таймаут → 3 повтора с паузами 5 / 15 / 45 с, затем `source_status.stale = true`. Старые данные остаются.
+**Зеркала Overpass.** `OVERPASS_URLS` — список через запятую (опционально; по умолчанию
+`overpass-api.de`, `lz4.overpass-api.de`, `overpass.private.coffee`, `overpass.kumi.systems`, все `/api/interpreter`).
+Connect timeout 10 с, read timeout 90 с. Ошибка зеркала → сразу пробуем следующее; в лог пишется,
+какое зеркало ответило, а URL сохраняется в `source_status.last_origin` (миграция `V5`).
+Если упали все зеркала — это одна неудачная попытка: 3 повтора с паузами 5 / 15 / 45 с, затем `source_status.stale = true`. Старые данные остаются.
+
+**Офлайн-снимок.** `src/main/resources/seed/osm_krakow_center.json` — компактный ответ Overpass для центра
+Кракова (bbox 19.90,50.04–19.98,50.075; только элементы с `name` и нужными тегами). При старте, если в `place`
+нет OSM-мест (только демо), запускается импорт; если живой импорт не удался и OSM-мест всё ещё нет —
+места грузятся из снимка (source `osm`, `fetched_at` = `osm3s.timestamp_osm_base` снимка,
+`last_origin = snapshot:...`, `stale` остаётся `true`). Отключить стартовый импорт: `OVERPASS_STARTUP_IMPORT=false`.
 Новый источник = новый класс, реализующий интерфейс:
 ```java
 public interface SourceAdapter {

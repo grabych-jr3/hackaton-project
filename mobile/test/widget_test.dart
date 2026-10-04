@@ -11,6 +11,7 @@ import 'package:hackaton_project/data/models/place.dart';
 import 'package:hackaton_project/data/repositories/places_repository.dart';
 import 'package:hackaton_project/data/repositories/profile_repository.dart';
 import 'package:hackaton_project/features/place/place_providers.dart';
+import 'package:hackaton_project/features/place/places_list.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Future<void> pumpApp(WidgetTester tester) async {
@@ -47,7 +48,7 @@ void main() {
     await tester.tap(find.text('Dalej'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Lista'), findsOneWidget);
+    expect(find.byTooltip('Lista miejsc'), findsOneWidget);
     final saved = await ProfileRepository().load();
     expect(saved?.preset, ProfilePreset.stroller);
   });
@@ -69,7 +70,12 @@ void main() {
     await pumpApp(tester);
 
     await openList(tester);
-    await tester.tap(find.text('Zamek Królewski na Wawelu'));
+    // List is sorted by distance; reach Wawel via search instead of scrolling.
+    await tester.enterText(find.byType(TextField), 'Zamek Królewski');
+    await tester.pumpAndSettle();
+    await tester.tap(find
+        .descendant(of: find.byType(Card), matching: find.text('Zamek Królewski na Wawelu'))
+        .last);
     await tester.pumpAndSettle();
 
     expect(find.text('Częściowo pasuje'), findsOneWidget);
@@ -99,7 +105,7 @@ class _FilePlacesRepository implements PlacesRepository {
 }
 
 Future<void> openList(WidgetTester tester) async {
-  await tester.tap(find.text('Lista'));
+  await tester.tap(find.byTooltip('Lista miejsc'));
   await tester.pumpAndSettle();
 }
 
@@ -122,7 +128,9 @@ void filterTests() {
 
     await tester.enterText(find.byType(TextField), 'schindler');
     await tester.pumpAndSettle();
-    expect(find.text('Fabryka Emalia Oskara Schindlera'), findsOneWidget);
-    expect(find.text('Sukiennice'), findsNothing);
+    Finder inList(String t) =>
+        find.descendant(of: find.byType(PlacesList), matching: find.text(t));
+    expect(inList('Fabryka Emalia Oskara Schindlera'), findsOneWidget);
+    expect(inList('Sukiennice'), findsNothing);
   });
 }

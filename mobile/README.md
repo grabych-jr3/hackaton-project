@@ -15,3 +15,17 @@ A few resources to get you started if this is your first Flutter project:
 For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
+
+## Uruchomienie z backendem
+
+Domyślnie (bez `API_BASE_URL`) aplikacja działa w trybie demo: dane z `assets/demo/`, gra zapisywana lokalnie.
+
+Aby połączyć się z backendem (domyślnie `http://localhost:8080/api/v1`):
+
+```bash
+flutter run -d chrome --dart-define-from-file=config/api.local.json
+```
+
+- Trasy liczy backend (`POST /routes`) — klucz OpenRouteService w kliencie nie jest potrzebny.
+- Gra (punkty, stwory, vouchery) i oceny informacji („Potwierdź” / „Zgłoś błąd”) idą na serwer.
+- Gdy serwer jest niedostępny, aplikacja pokazuje dane lokalne i baner „Serwer niedostępny — pokazujemy dane lokalne”.

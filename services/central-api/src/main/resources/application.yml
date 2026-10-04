@@ -16,8 +16,8 @@ spring:
     default-property-inclusion: always
   servlet:
     multipart:
-      max-file-size: 3MB
-      max-request-size: 4MB
+      max-file-size: 5MB
+      max-request-size: 6MB
   kafka:
     bootstrap-servers: ${SPRING_KAFKA_BOOTSTRAP_SERVERS:localhost:19092}
     producer:
@@ -47,9 +47,23 @@ app:
     base-url: ${ORS_BASE_URL:https://api.openrouteservice.org}
     cache-minutes: 10
   overpass:
-    url: ${OVERPASS_URL:https://overpass-api.de/api/interpreter}
+    # comma-separated mirrors tried in order; blank -> built-in default list (see OverpassAdapter.DEFAULT_URLS)
+    urls: ${OVERPASS_URLS:${OVERPASS_URL:}}
+    snapshot: classpath:seed/osm_krakow_center.json
+    startup-import: ${OVERPASS_STARTUP_IMPORT:true}
     cron: ${OVERPASS_CRON:0 0 4 * * *}
+  places:
+    limit: ${PLACES_LIMIT:50} # GET /places default size (curated selection, ?limit= max 200)
   admin-token: ${ADMIN_TOKEN:}
+  crowd:
+    recompute-ms: 300000
+    cell-m: ${CROWD_CELL_M:100} # honeycomb cell size (flat side to flat side), m
+    # prototype: busy Old Town / quiet outskirts on top of real data (set CROWD_DEMO=false to disable)
+    demo: ${CROWD_DEMO:true}
+  gtfs:
+    # ZTP Kraków open GTFS feeds (trams, buses); empty = skip transit in the crowd base
+    urls: ${GTFS_URLS:https://gtfs.ztp.krakow.pl/GTFS_KRK_T.zip,https://gtfs.ztp.krakow.pl/GTFS_KRK_A.zip}
+    cron: ${GTFS_CRON:0 30 4 * * MON}
 
 springdoc:
   swagger-ui:

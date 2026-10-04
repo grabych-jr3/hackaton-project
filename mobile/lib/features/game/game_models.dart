@@ -17,18 +17,34 @@ enum Rarity {
 }
 
 class Species {
-  const Species({required this.id, required this.name, required this.emoji, required this.rarity});
+  const Species({
+    required this.id,
+    required this.name,
+    required this.emoji,
+    required this.rarity,
+    int? sellValue,
+    this.description,
+  }) : _sellValue = sellValue;
 
   final String id;
   final String name;
   final String emoji;
   final Rarity rarity;
+  final int? _sellValue;
+
+  /// Optional Polish flavour text.
+  final String? description;
+
+  /// Points earned for selling one piece; defaults to the rarity value.
+  int get sellValue => _sellValue ?? rarity.points;
 
   factory Species.fromJson(Map<String, dynamic> j) => Species(
         id: j['id'] as String,
         name: j['name'] as String,
         emoji: j['emoji'] as String,
         rarity: Rarity.fromJson(j['rarity'] as String),
+        sellValue: (j['sellValue'] as num?)?.toInt(),
+        description: j['description'] as String?,
       );
 }
 
@@ -148,6 +164,17 @@ class BarrierReport {
     return s;
   }
 
+  /// API payload (`POST /game/reports` → `report`): Dart field names, enums by name.
+  Map<String, dynamic> toJson() => {
+        'placeId': placeId,
+        'steps': steps,
+        'curb': curb.name,
+        'passage': passage.name,
+        'noRamp': noRamp,
+        'uneven': uneven,
+        'obstacles': obstacles,
+      };
+
   bool get isEmpty =>
       steps == 0 &&
       curb == CurbRange.none &&
@@ -245,7 +272,132 @@ class GameState {
 class CatchResult {
   const CatchResult(this.species, this.points);
   final Species species;
+
+  /// Sell value of the caught creature — catching itself awards no points.
   final int points;
+}
+
+/// Status of a photo catch analysed by the vision service.
+enum CatchStatus {
+  pending,
+  ok,
+  rejected,
+  failed;
+
+  static CatchStatus fromJson(String? v) => switch (v) {
+        'PENDING' => pending,
+        'OK' => ok,
+        'REJECTED' => rejected,
+        _ => failed,
+      };
+}
+
+/// AI estimate of barriers in a catch photo (unverified).
+class CatchAiResult {
+  const CatchAiResult({
+    this.steps,
+    this.kerbRange,
+    this.widthRange,
+    this.ramp,
+    this.handrail,
+    this.obstacles,
+    this.difficulty,
+    this.confidence,
+  });
+
+  final int? steps;
+  final String? kerbRange;
+  final String? widthRange;
+  final bool? ramp;
+  final bool? handrail;
+  final bool? obstacles;
+  final String? difficulty;
+  final double? confidence;
+
+  factory CatchAiResult.fromJson(Map<String, dynamic> j) => CatchAiResult(
+        steps: (j['steps'] as num?)?.toInt(),
+        kerbRange: j['kerbRange']?.toString(),
+        widthRange: j['widthRange']?.toString(),
+        ramp: j['ramp'] as bool?,
+        handrail: j['handrail'] as bool?,
+        obstacles: j['obstacles'] is bool
+            ? j['obstacles'] as bool
+            : (j['obstacles'] is List ? (j['obstacles'] as List).isNotEmpty : null),
+        difficulty: j['difficulty']?.toString(),
+        confidence: (j['confidence'] as num?)?.toDouble(),
+      );
+
+  /// Human-readable Polish barrier lines.
+  List<String> get lines => [
+        if (steps != null) steps == 0 ? 'Brak schodów' : 'Schody: $steps',
+        if (kerbRange != null) 'Krawężnik: $kerbRange',
+        if (widthRange != null) 'Szerokość przejścia: $widthRange',
+        if (ramp != null) ramp! ? 'Podjazd / rampa: jest' : 'Brak podjazdu / rampy',
+        if (handrail != null) handrail! ? 'Poręcz: jest' : 'Brak poręczy',
+        if (obstacles == true) 'Przeszkody na drodze',
+        if (difficulty != null) 'Trudność: $difficulty',
+        if (confidence != null) 'Pewność AI: ${(confidence! * 100).round()}%',
+      ];
+}
+
+/// `GET /catches/{id}` (and the `202` of `POST /catches`).
+class CatchPhotoResponse {
+  const CatchPhotoResponse({
+    required this.catchId,
+    required this.status,
+    this.reason,
+    this.result,
+    this.species,
+    this.points = 0,
+    this.state,
+    this.timedOut = false,
+  });
+
+  final String catchId;
+  final CatchStatus status;
+  final String? reason;
+  final CatchAiResult? result;
+  final Species? species;
+
+  /// Sell value of the creature — catching itself awards no points.
+  final int points;
+
+  /// Server game state after the catch (collection updated server-side).
+  final GameState? state;
+
+  /// true when polling gave up while still PENDING.
+  final bool timedOut;
+
+  factory CatchPhotoResponse.fromJson(Map<String, dynamic> j) {
+    final species = j['species'] as Map<String, dynamic>?;
+    final result = j['result'] as Map<String, dynamic>?;
+    final state = j['state'] as Map<String, dynamic>?;
+    return CatchPhotoResponse(
+      catchId: j['catchId'].toString(),
+      status: CatchStatus.fromJson(j['status'] as String?),
+      reason: j['reason'] as String?,
+      result: result == null ? null : CatchAiResult.fromJson(result),
+      species: species == null ? null : Species.fromJson(species),
+      points: (j['points'] as num?)?.toInt() ?? 0,
+      state: state == null ? null : GameState.fromJson(state),
+    );
+  }
+}
+
+enum SellFailure { invalidCount, notEnoughCreatures, unknownSpecies }
+
+class SellException implements Exception {
+  const SellException(this.failure);
+  final SellFailure failure;
+
+  @override
+  String toString() => 'SellException(${failure.name})';
+}
+
+class SellResult {
+  const SellResult(this.state, this.earned);
+  final GameState state;
+  final int earned;
 }
 
 /// Pure game rules, independent of Riverpod and storage.
@@ -262,11 +414,21 @@ class GameRules {
     final species = pool[random.nextInt(pool.length)];
     final caught = Map<String, int>.of(state.caught)
       ..update(species.id, (c) => c + 1, ifAbsent: () => 1);
-    final pts = species.rarity.points;
-    return (
-      state.copyWith(points: state.points + pts, caught: caught),
-      CatchResult(species, pts),
-    );
+    return (state.copyWith(caught: caught), CatchResult(species, species.sellValue));
+  }
+
+  /// Sells [count] creatures of [speciesId]; throws [SellException].
+  SellResult sell(GameState state, String speciesId, int count) {
+    final species = catalog.speciesById(speciesId);
+    if (species == null) throw const SellException(SellFailure.unknownSpecies);
+    if (count < 1) throw const SellException(SellFailure.invalidCount);
+    final owned = state.caught[speciesId] ?? 0;
+    if (count > owned) throw const SellException(SellFailure.notEnoughCreatures);
+    final caught = Map<String, int>.of(state.caught);
+    // Keep the key at 0: a species once caught stays discovered in Kolekcja.
+    caught[speciesId] = owned - count;
+    final earned = species.sellValue * count;
+    return SellResult(state.copyWith(points: state.points + earned, caught: caught), earned);
   }
 
   /// Returns null when not enough points or offer unverified.

@@ -16,8 +16,6 @@ class ProfileScreen extends ConsumerWidget {
 
     void save(NeedsProfile p) => ref.read(profileProvider.notifier).save(p);
 
-    /// Any manual threshold change turns the profile into a custom one.
-    void edit(NeedsProfile p) => save(p.copyWith(preset: ProfilePreset.custom));
 
     return Scaffold(
       appBar: AppBar(title: const Text('Profil')),
@@ -27,7 +25,7 @@ class ProfileScreen extends ConsumerWidget {
           const _SectionTitle('Jak się poruszasz'),
           SegmentedButton<ProfilePreset>(
             segments: [
-              for (final preset in ProfilePreset.values)
+              for (final preset in selectablePresets)
                 ButtonSegment(
                   value: preset,
                   icon: Icon(preset.icon),
@@ -35,7 +33,11 @@ class ProfileScreen extends ConsumerWidget {
                   tooltip: preset.label,
                 ),
             ],
-            selected: {profile.preset},
+            selected: {
+              profile.preset == ProfilePreset.custom
+                  ? ProfilePreset.wheelchair
+                  : profile.preset,
+            },
             showSelectedIcon: false,
             onSelectionChanged: (s) => save(s.first.defaults),
           ),
@@ -48,47 +50,6 @@ class ProfileScreen extends ConsumerWidget {
                 ?.copyWith(color: AppColors.textMuted),
           ),
           const SizedBox(height: 20),
-          const _SectionTitle('Bariery, które pokonasz'),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Column(
-                children: [
-                  _ThresholdSlider(
-                    label: 'Maks. liczba schodów',
-                    value: profile.maxSteps,
-                    max: 5,
-                    unit: '',
-                    onChanged: (v) => edit(profile.copyWith(maxSteps: v)),
-                  ),
-                  _ThresholdSlider(
-                    label: 'Maks. wysokość krawężnika',
-                    value: profile.maxKerbCm,
-                    max: 15,
-                    unit: ' cm',
-                    onChanged: (v) => edit(profile.copyWith(maxKerbCm: v)),
-                  ),
-                  _ThresholdSlider(
-                    label: 'Min. szerokość przejścia',
-                    value: profile.minWidthCm,
-                    min: 50,
-                    max: 120,
-                    divisions: 14,
-                    unit: ' cm',
-                    onChanged: (v) => edit(profile.copyWith(minWidthCm: v)),
-                  ),
-                  _ThresholdSlider(
-                    label: 'Maks. nachylenie',
-                    value: profile.maxInclinePct,
-                    max: 15,
-                    unit: '%',
-                    onChanged: (v) => edit(profile.copyWith(maxInclinePct: v)),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 20),
           const _SectionTitle('Udogodnienia'),
           Card(
             child: Column(
@@ -97,13 +58,13 @@ class ProfileScreen extends ConsumerWidget {
                   secondary: const Icon(Icons.wc),
                   title: const Text('Potrzebuję dostępnej toalety'),
                   value: profile.needsToilet,
-                  onChanged: (v) => edit(profile.copyWith(needsToilet: v)),
+                  onChanged: (v) => save(profile.copyWith(needsToilet: v)),
                 ),
                 SwitchListTile(
                   secondary: const Icon(Icons.chair_outlined),
                   title: const Text('Miejsca do odpoczynku na trasie'),
                   value: profile.needsBenches,
-                  onChanged: (v) => edit(profile.copyWith(needsBenches: v)),
+                  onChanged: (v) => save(profile.copyWith(needsBenches: v)),
                 ),
                 SwitchListTile(
                   secondary: const Icon(Icons.groups_outlined),
@@ -146,62 +107,6 @@ class _SectionTitle extends StatelessWidget {
               .titleMedium
               ?.copyWith(fontWeight: FontWeight.w800),
         ),
-      ),
-    );
-  }
-}
-
-class _ThresholdSlider extends StatelessWidget {
-  const _ThresholdSlider({
-    required this.label,
-    required this.value,
-    required this.max,
-    required this.unit,
-    required this.onChanged,
-    this.min = 0,
-    this.divisions,
-  });
-
-  final String label;
-  final int value;
-  final int min;
-  final int max;
-  final int? divisions;
-  final String unit;
-  final ValueChanged<int> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    final valueText = '$value$unit';
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(child: Text(label, style: text.bodyLarge)),
-              Text(
-                valueText,
-                style: text.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.primary,
-                ),
-              ),
-            ],
-          ),
-          Slider(
-            value: value.toDouble(),
-            min: min.toDouble(),
-            max: max.toDouble(),
-            divisions: divisions ?? (max - min),
-            label: valueText,
-            semanticFormatterCallback: (_) => '$label: $valueText',
-            onChanged: (v) => onChanged(v.round()),
-          ),
-        ],
       ),
     );
   }

@@ -5,7 +5,9 @@ import 'package:go_router/go_router.dart';
 import 'core/theme/app_theme.dart';
 import 'core/widgets/phone_frame.dart';
 import 'data/repositories/profile_repository.dart';
+import 'features/catch/ar_catch_screen.dart';
 import 'features/catch/catch_screen.dart';
+import 'features/catch/pending_catches.dart' show catchMessengerKey;
 import 'features/collection/collection_screen.dart';
 import 'features/map/map_screen.dart';
 import 'features/onboarding/onboarding_screen.dart';
@@ -14,8 +16,12 @@ import 'features/profile/profile_screen.dart';
 import 'features/rewards/rewards_screen.dart';
 import 'features/shell/home_shell.dart';
 
-GoRouter _buildRouter() => GoRouter(
-  initialLocation: '/map',
+/// Root navigator: fullscreen routes (camera) cover the bottom navigation.
+final rootNavigatorKey = GlobalKey<NavigatorState>();
+
+GoRouter buildAppRouter({String initialLocation = '/map'}) => GoRouter(
+  navigatorKey: rootNavigatorKey,
+  initialLocation: initialLocation,
   routes: [
     StatefulShellRoute.indexedStack(
       builder: (context, state, shell) => HomeShell(navigationShell: shell),
@@ -26,6 +32,20 @@ GoRouter _buildRouter() => GoRouter(
         _branch('/collection', const CollectionScreen()),
         _branch('/profile', const ProfileScreen()),
       ],
+    ),
+    GoRoute(
+      path: '/catch/camera',
+      parentNavigatorKey: rootNavigatorKey, // fullscreen, no bottom nav
+      builder: (context, state) =>
+          ArCatchScreen(
+        placeId: state.uri.queryParameters['placeId'],
+        spawnId: state.uri.queryParameters['spawnId'],
+        speciesEmoji: state.uri.queryParameters['emoji'],
+        speciesId: state.uri.queryParameters['speciesId'],
+        speciesName: state.uri.queryParameters['name'],
+        spawnLat: double.tryParse(state.uri.queryParameters['spawnLat'] ?? ''),
+        spawnLng: double.tryParse(state.uri.queryParameters['spawnLng'] ?? ''),
+      ),
     ),
     GoRoute(
       path: '/place/:id',
@@ -47,7 +67,7 @@ class KrakowBezBarierApp extends StatefulWidget {
 }
 
 class _KrakowBezBarierAppState extends State<KrakowBezBarierApp> {
-  late final _router = _buildRouter();
+  late final _router = buildAppRouter();
 
   @override
   Widget build(BuildContext context) {
@@ -58,6 +78,7 @@ class _KrakowBezBarierAppState extends State<KrakowBezBarierApp> {
       darkTheme: AppTheme.dark(),
       themeMode: ThemeMode.dark,
       routerConfig: _router,
+      scaffoldMessengerKey: catchMessengerKey,
       builder: (context, child) => PhoneFrame(child: _ProfileGate(child: child!)),
     );
   }

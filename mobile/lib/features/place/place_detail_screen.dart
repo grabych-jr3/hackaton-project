@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/config.dart';
 import '../../core/theme/app_colors.dart';
+import '../../data/api/api_client.dart';
 import '../../data/models/accessibility_fact.dart';
 import '../../data/models/place.dart';
+import '../../data/repositories/places_repository.dart';
 import '../../domain/profile_match.dart';
 import 'place_labels.dart';
 import 'place_providers.dart';
@@ -91,7 +94,7 @@ class _PlaceDetail extends ConsumerWidget {
           children: [
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: () => _soon(context),
+                onPressed: () => _vote(context, ref, confirm: true),
                 icon: const Icon(Icons.thumb_up_outlined),
                 label: const Text('Potwierdź'),
               ),
@@ -99,7 +102,7 @@ class _PlaceDetail extends ConsumerWidget {
             const SizedBox(width: 12),
             Expanded(
               child: OutlinedButton.icon(
-                onPressed: () => _soon(context),
+                onPressed: () => _vote(context, ref, confirm: false),
                 icon: const Icon(Icons.flag_outlined),
                 label: const Text('Zgłoś błąd'),
               ),
@@ -114,6 +117,47 @@ class _PlaceDetail extends ConsumerWidget {
         ),
       ],
     );
+  }
+
+  /// API mode: pick a fact, confirm/dispute it on the server, refresh places.
+  Future<void> _vote(BuildContext context, WidgetRef ref,
+      {required bool confirm}) async {
+    final repo = ref.read(placesRepositoryProvider);
+    if (!useApi || repo is! ApiPlacesRepository) return _soon(context);
+    final messenger = ScaffoldMessenger.of(context);
+    final facts = place.facts.where((f) => f.id != null).toList();
+    if (facts.isEmpty) {
+      messenger.showSnackBar(const SnackBar(
+          content: Text('Brak informacji z serwera do oceny dla tego miejsca.')));
+      return;
+    }
+    final fact = await showDialog<AccessibilityFact>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: Text(confirm ? 'Co potwierdzasz?' : 'Która informacja jest błędna?'),
+        children: [
+          for (final f in facts)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, f),
+              child: Text('${f.feature.label}: ${f.value} (${f.source.label})'),
+            ),
+        ],
+      ),
+    );
+    if (fact == null) return;
+    String msg;
+    try {
+      await repo.vote(fact.id!, confirm: confirm);
+      ref.invalidate(placesProvider);
+      msg = confirm ? 'Dziękujemy za potwierdzenie!' : 'Dziękujemy za zgłoszenie!';
+    } on ApiException catch (e) {
+      msg = e.status == 409
+          ? 'Już oceniłeś tę informację.'
+          : 'Nie udało się wysłać (błąd ${e.status}).';
+    } catch (_) {
+      msg = 'Serwer niedostępny — spróbuj później.';
+    }
+    messenger.showSnackBar(SnackBar(content: Text(msg)));
   }
 
   void _soon(BuildContext context) {

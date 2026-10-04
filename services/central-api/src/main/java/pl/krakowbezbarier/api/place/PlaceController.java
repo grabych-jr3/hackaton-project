@@ -23,14 +23,18 @@ public class PlaceController {
         this.sources = sources;
     }
 
-    /** bbox = minLng,minLat,maxLng,maxLat (optional); max 500 places. */
+    @org.springframework.beans.factory.annotation.Value("${app.places.limit:50}")
+    int defaultLimit = PlaceSelector.DEFAULT_LIMIT;
+
+    /** bbox = minLng,minLat,maxLng,maxLat (optional); curated selection, limit default 50 (max 200). */
     @GetMapping("/places")
     public PlacesResponse list(@RequestParam(required = false) String bbox,
-                               @RequestParam(required = false) String category) {
+                               @RequestParam(required = false) String category,
+                               @RequestParam(required = false) Integer limit) {
         if (category != null && !category.isBlank() && !Enums.CATEGORIES.contains(category)) {
             throw ApiException.badRequest("Unknown category: " + category);
         }
-        return new PlacesResponse(places.find(GeoUtils.parseBbox(bbox), category), sources.summary());
+        return new PlacesResponse(places.find(GeoUtils.parseBbox(bbox), category, PlaceSelector.clampLimit(limit, defaultLimit)), sources.summary());
     }
 
     @GetMapping("/places/{id}")

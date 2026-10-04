@@ -10,7 +10,7 @@ from pydantic import ValidationError
 from app.analyzer import MockAnalyzer
 from app.config import Settings
 from app.kafka_worker import process_record
-from app.pipeline import analyze_bytes, handle_submitted
+from app.pipeline import REASON_FAILED, analyze_bytes, handle_submitted
 from app.preprocess import REASON_BLUR, REASON_DARK, preprocess
 from app.schema import AnalysisResult, PhotoSubmitted
 
@@ -125,7 +125,8 @@ def test_pipeline_ok():
     out = run(analyze_bytes("c1", _jpeg(sharp()), a, settings(), retry_delay=0))
     assert out.status == "OK" and out.result.steps == 4 and out.phash
     d = json.loads(out.model_dump_json())
-    assert set(d) == {"catchId", "status", "result", "phash", "reason"}
+    assert set(d) == {"catchId", "status", "result", "phash", "reason", "model"}
+    assert d["model"] == "fake"
     assert "relevant" not in d["result"]
 
 
@@ -136,9 +137,9 @@ def test_pipeline_retry_then_ok():
 
 
 def test_pipeline_failed_after_retries():
-    a = FakeAnalyzer([RuntimeError("x")] * 3)
+    a = FakeAnalyzer([RuntimeError("x")] * 2)
     out = run(analyze_bytes("c1", _jpeg(sharp()), a, settings(), retry_delay=0))
-    assert out.status == "FAILED" and out.reason and a.calls == 3
+    assert out.status == "FAILED" and out.reason == REASON_FAILED and a.calls == 2
 
 
 def test_pipeline_irrelevant_rejected():

@@ -1,0 +1,30 @@
+{
+  "dataset": "DANE PRZYKŁADOWE — demonstracyjne stworki, partnerzy i oferty; nie są prawdziwymi ofertami",
+  "isDemo": true,
+  "initialPoints": 120,
+  "species": [
+    {"id": "golab", "name": "Szop Liściak", "emoji": "🦝", "rarity": "common", "sellValue": 10, "description": "Szop z Plant, który zamiast futra nosi jesienne liście. Szeleści w alejkach wokół Starego Miasta i zna każdy krawężnik przy Sukiennicach."},
+    {"id": "jez", "name": "Kryształowy Zając", "emoji": "🐇", "rarity": "common", "sellValue": 10, "description": "Zając z Błoń, któremu na grzbiecie wyrosły szmaragdowe kryształy. Kica tylko tam, gdzie chodnik jest równy i bez stopni."},
+    {"id": "lis", "name": "Lodowy Lis", "emoji": "🦊", "rarity": "common", "sellValue": 10, "description": "Lis z Lasku Wolskiego o lodowym futrze i kryształowym ogonie. Sprytny przewodnik po skrótach – zawsze znajdzie łagodny podjazd tam, gdzie inni widzą tylko schody."},
+    {"id": "jaszczur", "name": "Gwiezdny Jaszczur", "emoji": "🦎", "rarity": "common", "sellValue": 10, "description": "Jaszczur z murów Barbakanu z kryzą usianą gwiazdami. Wygrzewa się na ciepłych cegłach i rozkłada kryzę za każdym razem, gdy ktoś zgłosi nową barierę."},
+    {"id": "sowa", "name": "Motylosmok", "emoji": "🦋", "rarity": "rare", "sellValue": 25, "description": "Mały smok o skrzydłach motyla, który nocą krąży nad dziedzińcem Collegium Maius. Mądry jak profesor – pamięta każdy próg w zaułkach Starego Miasta."},
+    {"id": "wydra", "name": "Bąbelkowa Ośmiornica", "emoji": "🐙", "rarity": "rare", "sellValue": 25, "description": "Ośmiornica z bulwarów wiślanych, otoczona mieniącymi się bańkami. Pływa między Kazimierzem a Podgórzem i uwielbia płaskie, szerokie nabrzeża."},
+    {"id": "plaszczka", "name": "Kosmiczna Płaszczka", "emoji": "🌌", "rarity": "rare", "sellValue": 25, "description": "Gwiezdna płaszczka, która nocą szybuje nad Wisłą pod Wawelem. Jej ogon płonie błękitnym ogniem i wskazuje drogę bez krawężników."},
+    {"id": "bocian", "name": "Gryf", "emoji": "🦅", "rarity": "epic", "sellValue": 60, "description": "Gryf o srebrnych skrzydłach, który krąży nad Kopcem Kościuszki. Z góry widzi, gdzie miasto jest dostępne, a gdzie jeszcze nie."},
+    {"id": "niedzwiedz", "name": "Lawowa Salamandra", "emoji": "🔥", "rarity": "epic", "sellValue": 60, "description": "Salamandra z ognistych żył Kopca Krakusa, strażniczka Podgórza. Gorąca, ale cierpliwa – czeka, aż każda bariera zostanie zgłoszona."},
+    {"id": "smok", "name": "Smok Wawelski", "emoji": "🐉", "rarity": "legendary", "sellValue": 150, "description": "Smok Wawelski we własnej osobie – ten sam, którego szewczyk Skuba pokonał baranem wypchanym siarką. Dziś zamiast zjadać owce pilnuje, by na Wawel dało się wjechać bez schodów."}
+  ],
+  "offers": [
+    {"id": "kawa-rynek", "partner": "Kawiarnia Pod Arkadami (demo)", "placeId": "sukiennice", "discount": "-20% na kawę", "cost": 50, "verifiedAccess": true},
+    {"id": "obiad-kazimierz", "partner": "Bistro Kazimierz (demo)", "discount": "Deser gratis do obiadu", "cost": 80, "verifiedAccess": true},
+    {"id": "muzeum-podgorze", "partner": "Muzeum w Podgórzu (demo)", "discount": "-30% na bilet", "cost": 150, "verifiedAccess": true},
+    {"id": "lody-huta", "partner": "Lodziarnia Nowa Huta (demo)", "discount": "Druga gałka gratis", "cost": 40, "verifiedAccess": true},
+    {"id": "bar-schody", "partner": "Bar Na Schodach (demo)", "discount": "-10% na wszystko", "cost": 30, "verifiedAccess": false}
+  ],
+  "districts": [
+    {"name": "Stare Miasto", "percent": 42},
+    {"name": "Kazimierz", "percent": 27},
+    {"name": "Podgórze", "percent": 15},
+    {"name": "Nowa Huta", "percent": 6}
+  ]
+}

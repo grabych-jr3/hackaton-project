@@ -20,7 +20,10 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    public record ApiError(String error, String message) {}
+    /** error and code carry the same value (client reads code). */
+    public record ApiError(String error, String code, String message) {
+        public ApiError(String error, String message) { this(error, error, message); }
+    }
 
     @ExceptionHandler(ApiException.class)
     ResponseEntity<ApiError> api(ApiException e) {
@@ -36,7 +39,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MaxUploadSizeExceededException.class)
     ResponseEntity<ApiError> tooLarge(Exception e) {
-        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(new ApiError("PAYLOAD_TOO_LARGE", "Photo must be at most 3 MB"));
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(new ApiError("PAYLOAD_TOO_LARGE", "Photo must be at most 5 MB"));
     }
 
     @ExceptionHandler(DuplicateKeyException.class)

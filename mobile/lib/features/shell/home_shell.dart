@@ -1,17 +1,19 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/app_colors.dart';
+import '../catch/open_camera.dart';
 
 /// Modern floating glassmorphic bottom navigation with highlighted center action button.
-class HomeShell extends StatelessWidget {
+class HomeShell extends ConsumerWidget {
   const HomeShell({super.key, required this.navigationShell});
 
   final StatefulNavigationShell navigationShell;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final currentIndex = navigationShell.currentIndex;
 
     return Scaffold(
@@ -58,7 +60,10 @@ class HomeShell extends StatelessWidget {
                     ),
                     _CenterScanButton(
                       isSelected: currentIndex == 2,
-                      onTap: () => _onTabSelected(2),
+                      // Tap: straight into the fullscreen camera (survey in
+                      // demo mode). Long-press: survey & Zgłoszenia tab.
+                      onTap: () => openCatchCamera(context, ref),
+                      onLongPress: () => _onTabSelected(2),
                     ),
                     _NavItem(
                       icon: Icons.grid_view_outlined,
@@ -110,13 +115,12 @@ class _NavItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Expanded(
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(20),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
+      child: _FocusableTab(
+        label: label,
+        isSelected: isSelected,
+        onTap: onTap,
+        child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -147,6 +151,73 @@ class _NavItem extends StatelessWidget {
               ],
             ),
           ),
+      ),
+    );
+  }
+}
+
+/// Keyboard-focusable tap target with a visible focus ring (WCAG 2.4.7)
+/// and screen-reader semantics. Enter/Space activate via InkWell.
+class _FocusableTab extends StatefulWidget {
+  const _FocusableTab({
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+    required this.child,
+    this.circle = false,
+    this.onLongPress,
+    this.hint,
+  });
+
+  final String label;
+  final bool isSelected;
+  final VoidCallback onTap;
+  final Widget child;
+  final bool circle;
+  final VoidCallback? onLongPress;
+  final String? hint;
+
+  @override
+  State<_FocusableTab> createState() => _FocusableTabState();
+}
+
+class _FocusableTabState extends State<_FocusableTab> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = widget.circle ? null : BorderRadius.circular(20);
+    return Semantics(
+      container: true,
+      button: true,
+      selected: widget.isSelected,
+      label: widget.label,
+      hint: widget.hint,
+      excludeSemantics: true,
+      onTap: widget.onTap,
+      onLongPress: widget.onLongPress,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            customBorder: widget.circle ? const CircleBorder() : null,
+            borderRadius: radius,
+            onTap: widget.onTap,
+            onLongPress: widget.onLongPress,
+            onFocusChange: (f) => setState(() => _focused = f),
+            child: DecoratedBox(
+              position: DecorationPosition.foreground,
+              decoration: BoxDecoration(
+                shape: widget.circle ? BoxShape.circle : BoxShape.rectangle,
+                borderRadius: radius,
+                border: _focused
+                    ? Border.all(color: AppColors.primary, width: 2.5)
+                    : null,
+              ),
+              child: Center(widthFactor: 1, heightFactor: 1, child: widget.child),
+            ),
+          ),
         ),
       ),
     );
@@ -157,15 +228,22 @@ class _CenterScanButton extends StatelessWidget {
   const _CenterScanButton({
     required this.isSelected,
     required this.onTap,
+    required this.onLongPress,
   });
 
   final bool isSelected;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return _FocusableTab(
+      label: 'Złap',
+      hint: 'Przytrzymaj, aby otworzyć ankietę i zgłoszenia',
+      isSelected: isSelected,
       onTap: onTap,
+      onLongPress: onLongPress,
+      circle: true,
       child: Container(
         width: 52,
         height: 52,

@@ -47,16 +47,18 @@ RESPONSE_SCHEMA = {
 
 class Analyzer(Protocol):
     name: str
+    models: list[str]
 
-    async def analyze(self, jpeg: bytes) -> str:
+    async def analyze(self, jpeg: bytes, model: str | None = None) -> str:
         """Return raw JSON text (validated by the pipeline)."""
         ...
 
 
 class MockAnalyzer:
     name = "mock"
+    models = ["mock"]
 
-    async def analyze(self, jpeg: bytes) -> str:
+    async def analyze(self, jpeg: bytes, model: str | None = None) -> str:
         h = hashlib.sha256(jpeg).digest()
         ans = GeminiAnswer(
             steps=h[0] % 5,
@@ -74,17 +76,17 @@ class MockAnalyzer:
 class GeminiAnalyzer:
     name = "gemini"
 
-    def __init__(self, api_key: str, model: str):
+    def __init__(self, api_key: str, models: list[str]):
         from google import genai
 
         self._client = genai.Client(api_key=api_key)
-        self._model = model
+        self.models = list(models)
 
-    async def analyze(self, jpeg: bytes) -> str:
+    async def analyze(self, jpeg: bytes, model: str | None = None) -> str:
         from google.genai import types
 
         resp = await self._client.aio.models.generate_content(
-            model=self._model,
+            model=model or self.models[0],
             contents=[
                 types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"),
                 "Oceń dostępność miejsca na zdjęciu.",
@@ -99,11 +101,11 @@ class GeminiAnalyzer:
         return resp.text or ""
 
 
-def build_analyzer(api_key: str, model: str) -> Analyzer:
+def build_analyzer(api_key: str, models: list[str]) -> Analyzer:
     if not api_key:
         log.warning("=" * 60)
         log.warning("GEMINI_API_KEY not set -> using deterministic MOCK analyzer (obstacles=['MOCK'])")
         log.warning("=" * 60)
         return MockAnalyzer()
-    log.info("Using Gemini analyzer, model=%s", model)
-    return GeminiAnalyzer(api_key, model)
+    log.info("Using Gemini analyzer, models (rotation order)=%s", ",".join(models))
+    return GeminiAnalyzer(api_key, models)

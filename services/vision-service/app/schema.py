@@ -43,3 +43,4 @@ class PhotoAnalyzed(BaseModel):
     result: Optional[AnalysisResult] = None
     phash: Optional[str] = None
     reason: Optional[str] = None
+    model: Optional[str] = None  # which Gemini model produced the result (extra, optional)

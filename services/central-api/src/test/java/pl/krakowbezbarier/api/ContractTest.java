@@ -46,11 +46,20 @@ class ContractTest {
 
     @Test
     void routeResponseShape() throws Exception {
-        var r = new RouteResponse(10, 9, List.<double[]>of(new double[]{50.06, 19.93}),
-                List.of(new Segment("x", 10, List.of())), List.of(0, 1), "openrouteservice", false);
+        var r = new RouteResponse("foot-walking", 10, 9, List.<double[]>of(new double[]{50.06, 19.93}),
+                List.of(new Segment("x", 10, null)), List.of(0, 1), "openrouteservice", false, false, null,
+                List.of(new pl.krakowbezbarier.api.route.RouteDtos.Barrier(0, 1, "steps", "Schody", null)), false, null);
         JsonNode j = om.readTree(om.writeValueAsString(r));
         assertEquals(50.06, j.at("/geometry/0/0").asDouble());
         assertTrue(j.has("distanceM") && j.has("durationS") && j.has("fallback"));
+        assertFalse(j.get("relaxed").asBoolean());
+        assertTrue(j.has("fallbackReason") && j.get("fallbackReason").isNull());
+        assertEquals("foot-walking", j.get("profile").asText());
+        assertEquals("steps", j.at("/barriers/0/type").asText());
+        assertEquals(1, j.at("/barriers/0/toIndex").asInt());
+        assertTrue(j.at("/barriers/0/detail").isNull());
+        assertFalse(j.get("accessible").asBoolean());
+        assertTrue(j.has("alternative") && j.get("alternative").isNull());
     }
 
     @Test
