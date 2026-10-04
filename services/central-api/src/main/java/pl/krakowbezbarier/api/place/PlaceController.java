@@ -23,7 +23,7 @@ public class PlaceController {
         this.sources = sources;
     }
 
-    /** bbox = minLng,minLat,maxLng,maxLat (optional); max 500 places. */
+    /** bbox = minLng,minLat,maxLng,maxLat (optional); max 2500 places. */
     @GetMapping("/places")
     public PlacesResponse list(@RequestParam(required = false) String bbox,
                                @RequestParam(required = false) String category) {

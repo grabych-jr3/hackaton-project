@@ -16,7 +16,7 @@ import java.util.*;
 /** Plain JDBC + PostGIS functions (no Hibernate Spatial needed). */
 @Repository
 public class PlaceRepository {
-    public static final int MAX_PLACES = 500;
+    public static final int MAX_PLACES = 2500;
     private final JdbcTemplate jdbc;
     private final ObjectMapper om;
 
