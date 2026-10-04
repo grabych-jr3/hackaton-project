@@ -20,7 +20,7 @@ The model also returns `relevant` — if `false` the photo is `REJECTED`. The an
 - 503 / 429 / 500 / `UNAVAILABLE` / `RESOURCE_EXHAUSTED` / `DEADLINE_EXCEEDED` / timeout → immediately the next
   model (0.5–1 s jitter). 404 `NOT_FOUND` (retired model) → skipped for the rest of this photo.
 - Invalid JSON → one retry on the same model, then the next model.
-- At most 2 passes over the list; each call `asyncio.wait_for` 45 s (`AI_CALL_TIMEOUT_S`); total budget 60 s per
+- At most 2 passes over the list; each call `asyncio.wait_for` 15 s (`AI_CALL_TIMEOUT_S`); total budget 60 s per
   photo (`AI_TIME_BUDGET_S`).
 - In-memory circuit breaker: a model that returned 503/429 is on cooldown for 2 min (`MODEL_COOLDOWN_S`) and is tried
   last for subsequent photos.

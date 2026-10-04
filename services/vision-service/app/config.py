@@ -32,7 +32,7 @@ class Settings:
     gemini_models: list[str] = field(
         default_factory=lambda: parse_models(os.getenv("GEMINI_MODEL"), os.getenv("GEMINI_MODELS")))
     ai_time_budget: float = field(default_factory=lambda: float(os.getenv("AI_TIME_BUDGET_S", "60")))
-    ai_call_timeout: float = field(default_factory=lambda: float(os.getenv("AI_CALL_TIMEOUT_S", "45")))
+    ai_call_timeout: float = field(default_factory=lambda: float(os.getenv("AI_CALL_TIMEOUT_S", "15")))
     model_cooldown: float = field(default_factory=lambda: float(os.getenv("MODEL_COOLDOWN_S", "120")))
     photos_dir: str = field(default_factory=lambda: os.getenv("PHOTOS_DIR", "/photos"))
     blur_threshold: float = field(default_factory=lambda: float(os.getenv("BLUR_THRESHOLD", "60")))

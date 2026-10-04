@@ -74,6 +74,9 @@ async def run_ai(catch_id: str, jpeg: bytes, analyzer: Analyzer, settings: Setti
                 except asyncio.TimeoutError:
                     last_err = f"{label}: timeout"
                     log.warning("catch %s: %s", catch_id, last_err)
+                    # A hanging model is as bad as an overloaded one: skip it for a while.
+                    if model is not None:
+                        cooldown.mark(model)
                     break
                 except Exception as e:
                     kind = classify_error(e)
