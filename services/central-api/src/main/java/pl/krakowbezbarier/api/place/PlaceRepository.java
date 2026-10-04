@@ -16,7 +16,6 @@ import java.util.*;
 /** Plain JDBC + PostGIS functions (no Hibernate Spatial needed). */
 @Repository
 public class PlaceRepository {
-    public static final int MAX_PLACES = 2500;
     private final JdbcTemplate jdbc;
     private final ObjectMapper om;
 
@@ -34,19 +33,50 @@ public class PlaceRepository {
     private static final String PLACE_SELECT =
             "SELECT id, name, category, ST_Y(geom) AS lat, ST_X(geom) AS lng, address, is_demo FROM place ";
 
-    public List<PlaceDto> find(BBox bbox, String category) {
-        StringBuilder sql = new StringBuilder(PLACE_SELECT).append("WHERE 1=1 ");
+    /**
+     * Curated selection: one ranking SQL returns the top {@link PlaceSelector#CANDIDATES} (demo first, then
+     * accessibility facts, tourist category, named), then a Java greedy pass keeps picks
+     * >= {@link PlaceSelector#MIN_DISTANCE_M} apart until {@code limit} is reached.
+     */
+    public List<PlaceDto> find(BBox bbox, String category, int limit) {
+        StringBuilder sql = new StringBuilder("""
+                SELECT * FROM (
+                  SELECT p.id, p.name, p.category, ST_Y(p.geom) AS lat, ST_X(p.geom) AS lng, p.is_demo,
+                    (SELECT count(*) FROM accessibility_fact f WHERE f.place_id = p.id AND f.active) AS facts
+                  FROM place p WHERE 1=1
+                """);
         List<Object> args = new ArrayList<>();
         if (bbox != null) {
-            sql.append("AND geom && ST_MakeEnvelope(?, ?, ?, ?, 4326) ");
+            sql.append("AND p.geom && ST_MakeEnvelope(?, ?, ?, ?, 4326) ");
             args.addAll(List.of(bbox.minLng(), bbox.minLat(), bbox.maxLng(), bbox.maxLat()));
         }
         if (category != null && !category.isBlank()) {
-            sql.append("AND category = ? ");
+            sql.append("AND p.category = ? ");
             args.add(category);
         }
-        sql.append("ORDER BY name LIMIT ").append(MAX_PLACES);
-        return withFacts(jdbc.query(sql.toString(), PLACE_ROW, args.toArray()));
+        sql.append("""
+                ) c ORDER BY c.is_demo DESC, (c.facts > 0) DESC,
+                  CASE c.category WHEN 'attraction' THEN 3 WHEN 'museum' THEN 3 WHEN 'church' THEN 3 WHEN 'park' THEN 3
+                    WHEN 'bridge' THEN 2 WHEN 'cafe' THEN 1 WHEN 'restaurant' THEN 1 ELSE 0 END DESC,
+                  LEAST(c.facts, 9) DESC, (coalesce(c.name, '') <> '') DESC, c.id
+                LIMIT ?""");
+        args.add(PlaceSelector.CANDIDATES);
+        List<PlaceSelector.Candidate> cands = jdbc.query(sql.toString(), (rs, i) -> new PlaceSelector.Candidate(
+                rs.getString("id"), rs.getString("name"), rs.getString("category"), rs.getDouble("lat"),
+                rs.getDouble("lng"), rs.getBoolean("is_demo"), rs.getInt("facts")), args.toArray());
+        List<String> ids = PlaceSelector.select(cands, limit, PlaceSelector.MIN_DISTANCE_M).stream()
+                .map(PlaceSelector.Candidate::id).toList();
+        if (ids.isEmpty()) return List.of();
+        Map<String, PlaceRow> rows = new HashMap<>();
+        jdbc.query(con -> {
+            var ps = con.prepareStatement(PLACE_SELECT + "WHERE id = ANY(?)");
+            ps.setArray(1, con.createArrayOf("varchar", ids.toArray()));
+            return ps;
+        }, rs -> {
+            PlaceRow r = PLACE_ROW.mapRow(rs, 0);
+            rows.put(r.id(), r);
+        });
+        return withFacts(ids.stream().map(rows::get).filter(Objects::nonNull).toList());
     }
 
     public Optional<PlaceDto> findById(String id) {

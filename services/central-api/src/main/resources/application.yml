@@ -52,6 +52,8 @@ app:
     snapshot: classpath:seed/osm_krakow_center.json
     startup-import: ${OVERPASS_STARTUP_IMPORT:true}
     cron: ${OVERPASS_CRON:0 0 4 * * *}
+  places:
+    limit: ${PLACES_LIMIT:50} # GET /places default size (curated selection, ?limit= max 200)
   admin-token: ${ADMIN_TOKEN:}
   crowd:
     recompute-ms: 300000
