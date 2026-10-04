@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:latlong2/latlong.dart';
 
-import '../catch/ar_heading_shim.dart';
+import '../catch/ar_sensors.dart';
 import '../catch/gps_smoother.dart';
 
 /// "Postaw stworka tutaj" places the test creature this far in front of the

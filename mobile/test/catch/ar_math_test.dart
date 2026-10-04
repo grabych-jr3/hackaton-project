@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hackaton_project/features/catch/ar_math.dart';
-import 'package:hackaton_project/features/catch/ar_sensors.dart';
 
 // Phone upright (portrait), back camera looking horizontally.
 const upright = Vec3(0, 9.81, 0);
@@ -154,17 +153,5 @@ void main() {
       expect(magneticFieldLooksValid(const Vec3(0, 0, 5)), isFalse);
       expect(magneticFieldLooksValid(const Vec3(200, 0, 0)), isFalse);
     });
-  });
-
-  test('HeadingFusion follows compass then gyro', () {
-    var t = DateTime(2026);
-    final f = HeadingFusion(clock: () => t);
-    f.onAccel(upright);
-    f.onMag(magFacingEast);
-    expect(f.heading, closeTo(90, 1e-6));
-    f.onGyro(const Vec3(0, 0, 0));
-    t = t.add(const Duration(milliseconds: 100));
-    f.onGyro(const Vec3(0, -1, 0)); // turning right 57°/s for 0.1 s
-    expect(f.heading, closeTo(90 + 0.98 * 5.73, 0.05));
   });
 }

@@ -15,7 +15,6 @@ import '../../core/theme/app_colors.dart';
 import '../../data/repositories/catch_repository.dart';
 import '../game/game_models.dart';
 import 'ar_math.dart';
-import 'ar_heading_shim.dart';
 import 'ar_sensors.dart';
 import 'gps_smoother.dart';
 import 'pending_catches.dart';

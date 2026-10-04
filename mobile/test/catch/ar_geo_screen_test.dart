@@ -11,7 +11,6 @@ import 'package:hackaton_project/features/shell/home_shell.dart';
 import 'package:hackaton_project/data/api/api_client.dart';
 import 'package:hackaton_project/data/repositories/catch_repository.dart';
 import 'package:hackaton_project/features/catch/ar_catch_screen.dart';
-import 'package:hackaton_project/features/catch/ar_heading_shim.dart';
 import 'package:hackaton_project/features/catch/ar_sensors.dart';
 import 'package:hackaton_project/features/catch/gps_smoother.dart';
 import 'package:hackaton_project/features/catch/pending_catches.dart';
